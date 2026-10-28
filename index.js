@@ -898,7 +898,10 @@ export function apply(ctx, config = {}) {
 
     const title = text(payload.title).trim() || path.basename(projectDir)
     const workspace = await ctx.workspaceRegistry.create(projectDir, title)
-    const created = await ctx.sessionController.create({ workspaceId: workspace.id, cwd: projectDir })
+    // The Session Controller accepts either a Workspace id or a cwd, never both:
+    // the Workspace already owns the canonical project directory, so naming it
+    // is what fixes the new Session's cwd.
+    const created = await ctx.sessionController.create({ workspaceId: workspace.id })
     const requestId = randomUUID()
     await ctx.sessionController.prompt({
       sessionId: created.sessionId,
