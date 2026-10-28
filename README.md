@@ -12,6 +12,7 @@
    - 为项目目录创建/复用 DSH 工作区；
    - 通过 DSH API Session Controller 新建会话；
    - 把任务书作为会话的第一条任务提交；
+   - 自动把新会话权限切到 `danger-full-access`（完全权限：沙箱 danger-full-access + 审批 never）；
    - 在面板里给出「打开会话」入口。
 
 之后的所有实现工作都在 DSH 会话中进行。
@@ -45,6 +46,7 @@
     desktopAppPath: ''         # 桌面版 claude.exe；空则自动探测 WindowsApps
     ccSwitchPath: 'D:\CC Switch\cc-switch.exe'
     permissionMode: plan       # plan | dontAsk | acceptEdits | bypassPermissions | auto
+    permissionPreset: danger-full-access  # 新会话权限预设；完全权限
     model: ''                  # 传给 CLI 的 --model；空则沿用 Claude 原生设置
     timeoutMs: 240000          # 单次 Claude 调用超时
 ```

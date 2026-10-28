@@ -21,8 +21,15 @@ import path from 'node:path'
 /** Loader row name. */
 export const name = 'claude-on-dsh'
 
-/** Hard dependencies: the HTTP carrier and the two session seams. */
-export const inject = ['connection', 'workspaceRegistry', 'sessionController']
+/** Hard dependencies: the HTTP carrier, the session seams, and full-access setup. */
+export const inject = [
+  'connection',
+  'workspaceRegistry',
+  'sessionController',
+  'sessions',
+  'permissionPresets',
+  'approval',
+]
 
 const ROUTE = '/api/claude-on-dsh'
 const CLI_PROBE_TTL_MS = 60_000
@@ -35,6 +42,7 @@ const DEFAULTS = {
   desktopAppPath: '',
   ccSwitchPath: 'D:\\CC Switch\\cc-switch.exe',
   permissionMode: 'plan',
+  permissionPreset: 'danger-full-access',
   model: '',
   timeoutMs: 240_000,
 }
@@ -720,6 +728,7 @@ export function apply(ctx, config = {}) {
     desktopAppPath: text(config.desktopAppPath, DEFAULTS.desktopAppPath),
     ccSwitchPath: text(config.ccSwitchPath, DEFAULTS.ccSwitchPath),
     permissionMode: normalizeMode(config.permissionMode, DEFAULTS.permissionMode),
+    permissionPreset: text(config.permissionPreset, DEFAULTS.permissionPreset).trim() || DEFAULTS.permissionPreset,
     model: text(config.model, DEFAULTS.model).trim(),
     timeoutMs: clamp(Number(config.timeoutMs) || DEFAULTS.timeoutMs, 30_000, 1_800_000),
   }
@@ -902,14 +911,56 @@ export function apply(ctx, config = {}) {
     // the Workspace already owns the canonical project directory, so naming it
     // is what fixes the new Session's cwd.
     const created = await ctx.sessionController.create({ workspaceId: workspace.id })
+
+    // `create` returns a live Session, but resolve the Agent explicitly so the
+    // permission knobs and the prompt both address the activated Session.
+    let live = ctx.sessions.get(created.sessionId)
+    let activated = undefined
+    if (!live) {
+      const resolved = await ctx.sessionController.resolveAgent(created.sessionId)
+      if (resolved && resolved.agent) activated = resolved.agent
+      live = ctx.sessions.get(created.sessionId)
+    }
+    if (!live) {
+      throw userError('DSH 已创建会话，但无法激活它', '请重试；若持续出现，请重启 DSH。', 500)
+    }
+
+    // Full access = the danger-full-access preset: danger-full-access sandbox
+    // plus approval 'never'. Pin it before the first prompt so the first turn
+    // already runs without approval prompts.
+    let permission = settings.permissionPreset
+    let permissionWarning = ''
+    try {
+      ctx.permissionPresets.set(live, permission)
+      permission = ctx.permissionPresets.current(live)
+    } catch (error) {
+      permissionWarning = messageOf(error)
+      try {
+        if (!activated) {
+          const resolved = await ctx.sessionController.resolveAgent(created.sessionId)
+          if (resolved && resolved.agent) activated = resolved.agent
+        }
+        if (activated) ctx.approval.setPolicy(activated, 'never')
+      } catch {}
+      try {
+        permission = ctx.permissionPresets.current(live)
+      } catch {
+        permission = 'custom'
+      }
+    }
+
     const requestId = randomUUID()
-    await ctx.sessionController.prompt({
-      sessionId: created.sessionId,
-      requestId,
-      mode: 'queue',
-      content: [{ type: 'text', text: brief }],
-      clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    })
+    // prompt's second argument is the required admission AbortSignal.
+    await ctx.sessionController.prompt(
+      {
+        sessionId: created.sessionId,
+        requestId,
+        mode: 'queue',
+        content: [{ type: 'text', text: brief }],
+        clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      },
+      AbortSignal.timeout(60_000),
+    )
 
     const record = {
       id: randomUUID(),
@@ -922,6 +973,7 @@ export function apply(ctx, config = {}) {
       chars: brief.length,
       costUsd: typeof payload.costUsd === 'number' ? payload.costUsd : null,
       durationMs: typeof payload.durationMs === 'number' ? payload.durationMs : null,
+      permission,
     }
     try {
       await appendHistory(record)
@@ -932,6 +984,8 @@ export function apply(ctx, config = {}) {
       sessionId: created.sessionId,
       workspaceId: workspace.id,
       workspaceTitle: workspace.title,
+      permission,
+      permissionWarning,
       record,
     }
   }

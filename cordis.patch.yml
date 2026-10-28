@@ -10,6 +10,7 @@
 #   desktopAppPath  Claude Desktop claude.exe path; empty auto-detects WindowsApps
 #   ccSwitchPath    CC Switch executable used by the desktop app's proxy
 #   permissionMode  plan | dontAsk | acceptEdits | bypassPermissions | auto
+#   permissionPreset danger-full-access (full access) or another configured preset
 #   model           optional model override passed to the Claude Code CLI
 #   timeoutMs       per-call timeout for the CLI (default 240000)
 

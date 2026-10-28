@@ -61,6 +61,9 @@ window.__ModuleLoader__.load({
         handoffHint: '可以直接修改；DSH 会把它作为会话的第一条任务。',
         dispatch: '派发给 DSH 执行',
         dispatching: '正在创建 DSH 会话',
+        permissionLabel: '会话权限',
+        fullAccess: '完全权限（danger-full-access）',
+        permissionFallback: '完全权限切换失败，已退回仅关闭审批',
         dispatched: '已派发，DSH 开始执行',
         openSession: '打开会话',
         newProject: '再开一个项目',
@@ -152,6 +155,9 @@ window.__ModuleLoader__.load({
         handoffHint: 'Editable; DSH receives it as the first task of the session.',
         dispatch: 'Dispatch to DSH',
         dispatching: 'Creating the DSH session',
+        permissionLabel: 'Session permission',
+        fullAccess: 'Full access (danger-full-access)',
+        permissionFallback: 'Could not switch to full access; approvals were disabled only',
         dispatched: 'Dispatched; DSH is executing',
         openSession: 'Open session',
         newProject: 'Start another project',
@@ -681,7 +687,13 @@ window.__ModuleLoader__.load({
             costUsd: job && job.meta ? job.meta.costUsd : undefined,
             durationMs: job && job.meta ? job.meta.durationMs : undefined,
           })
-          setDispatch({ state: 'done', sessionId: data.sessionId, title: data.workspaceTitle })
+          setDispatch({
+            state: 'done',
+            sessionId: data.sessionId,
+            title: data.workspaceTitle,
+            permission: data.permission,
+            permissionWarning: data.permissionWarning,
+          })
           setPhase('dispatched')
           if (data.record) {
             setHistory((current) => [data.record].concat(current).slice(0, 24))
@@ -1004,6 +1016,22 @@ window.__ModuleLoader__.load({
             { className: 'cc-success' },
             h('div', { className: 'cc-successTitle' }, tt('dispatched')),
             h('div', { className: 'cc-successBody' }, dispatch.title || form.projectName || form.projectDir),
+            dispatch.permission
+              ? h(
+                  'div',
+                  { className: 'cc-successBody' },
+                  `${tt('permissionLabel')}: ${
+                    dispatch.permission === 'danger-full-access' ? tt('fullAccess') : dispatch.permission
+                  }`,
+                )
+              : null,
+            dispatch.permissionWarning
+              ? h(
+                  'div',
+                  { className: 'cc-inlineWarn' },
+                  `${tt('permissionFallback')}: ${dispatch.permissionWarning}`,
+                )
+              : null,
             h('code', { className: 'cc-code' }, dispatch.sessionId || ''),
           ),
           h(
