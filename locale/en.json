@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Claude on DSH",
+    "description": "Let the local Claude Code CLI or Claude Desktop ask a new project's opening question and write the plan, then hand the complete brief to DSH for execution."
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Claude on DSH",
+    "description": "让本机 Claude Code CLI 或 Claude 桌面版负责新项目的首个提问与规划，再把完整任务交接给 DSH 执行。"
+  }
+}

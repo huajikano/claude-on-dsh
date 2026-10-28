@@ -1,0 +1,21 @@
+# Claude on DSH
+#
+# One Loader row serves both halves: the Host half (`index.js`) registers the
+# `/api/claude-on-dsh/*` routes and drives the DSH API Session Controller;
+# the manifest's `dsh.client` section points the browser at `client.js`, which
+# registers the sidebar entry and the panel behind the same id.
+#
+# Optional row config (all fields have working defaults):
+#   claudeCliPath   native claude.exe path; empty auto-detects the npm install
+#   desktopAppPath  Claude Desktop claude.exe path; empty auto-detects WindowsApps
+#   ccSwitchPath    CC Switch executable used by the desktop app's proxy
+#   permissionMode  plan | dontAsk | acceptEdits | bypassPermissions | auto
+#   model           optional model override passed to the Claude Code CLI
+#   timeoutMs       per-call timeout for the CLI (default 240000)
+
+- insert:
+    - id: claude-on-dsh
+      name: claude-on-dsh
+      config:
+        permissionMode: plan
+        timeoutMs: 240000
