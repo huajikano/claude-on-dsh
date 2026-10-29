@@ -1105,6 +1105,89 @@ export function apply(ctx, config = {}) {
     return child.pid ?? 0
   }
 
+  function findWt() {
+    const local = text(process.env.LOCALAPPDATA)
+    const candidate = local ? path.join(local, 'Microsoft', 'WindowsApps', 'wt.exe') : ''
+    return candidate && isFile(candidate) ? candidate : ''
+  }
+
+  /**
+   * Open an interactive Claude Code terminal in the project so the human can
+   * watch Claude inspect, run tests, and write a visible acceptance report.
+   */
+  async function openReviewTerminal({ dir, goal, focus }) {
+    const executable = findCli(settings.claudeCliPath)
+    if (!executable) {
+      throw userError('没有找到 Claude Code CLI，无法启动可见验收', '请先确认 CLI 可用。', 500)
+    }
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const reportPath = path.join(dir, '.dsh', 'acceptance', `visible-${stamp}.md`)
+    await mkdir(path.dirname(reportPath), { recursive: true })
+    const base = path.join(os.tmpdir(), `claude-on-dsh-review-${randomUUID()}`)
+    const systemFile = `${base}-system.txt`
+    const promptFile = `${base}-prompt.txt`
+    const script = `${base}.ps1`
+    const system = [
+      '你是独立验收员，不参与实现，也不采信执行代理的自我汇报。',
+      '只依据项目文件、git 状态和你实际运行的命令输出做判断。',
+      '每条 pass/fail 必须给出可定位证据（文件路径 + 行号，或命令 + 输出片段）。',
+      '无法验证的项标 uncertain，禁止猜测。',
+    ].join('\n')
+    const prompt = [
+      `请对项目做独立验收：${dir}`,
+      '',
+      `任务背景 / 目标：${goal || '未提供，请按项目现状判断'}`,
+      `验收重点：${focus || '改动是否回应目标、构建/测试/lint 是否通过、是否越权改动无关文件'}`,
+      '',
+      '执行要求：',
+      '1. 阅读项目与 git 状态，列出实际改动文件；',
+      '2. 运行可用的构建/测试/lint，记录真实命令、输出与退出码；',
+      '3. 逐项给出 pass / fail / uncertain 与证据；无法验证的项必须标 uncertain；',
+      '4. 把验收报告写入下面的 Markdown 文件，并在终端打印结论与关键证据：',
+      `   ${reportPath}`,
+    ].join('\n')
+    await writeFile(systemFile, system, 'utf8')
+    await writeFile(promptFile, prompt, 'utf8')
+    const quote = (value) => `'${String(value).replace(/'/g, "''")}'`
+    const ps = [
+      "$ErrorActionPreference = 'Continue'",
+      `Set-Location -LiteralPath ${quote(dir)}`,
+      `$system = Get-Content -LiteralPath ${quote(systemFile)} -Raw -Encoding UTF8`,
+      `$prompt = Get-Content -LiteralPath ${quote(promptFile)} -Raw -Encoding UTF8`,
+      `& ${quote(executable)} --append-system-prompt $system $prompt`,
+      "Write-Host ''",
+      "Read-Host '按 Enter 关闭窗口'",
+    ].join('\n')
+    await writeFile(script, ps, 'utf8')
+    const wt = findWt()
+    const pid = wt
+      ? launchDetached(wt, [
+          'new-tab',
+          '--title',
+          'Claude 验收',
+          'powershell.exe',
+          '-NoExit',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          script,
+        ])
+      : launchDetached('cmd.exe', [
+          '/d',
+          '/s',
+          '/c',
+          'start',
+          '""',
+          'powershell.exe',
+          '-NoExit',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          `"${script}"`,
+        ])
+    return { pid, script, reportPath, executable }
+  }
+
   async function copyToClipboard(value) {
     // `clip.exe` decodes stdin with the console code page, which garbles
     // non-ASCII text written as UTF-8. Write a UTF-8 file and let PowerShell
@@ -1333,6 +1416,22 @@ export function apply(ctx, config = {}) {
         if (!sessionId) throw userError('缺少会话 id')
         acceptance.skip(sessionId)
         return json({ skipped: true, sessionId })
+      }),
+    },
+    {
+      path: '/acceptance/terminal',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        const dir = expand(body.projectDir)
+        if (!dir) throw userError('缺少项目目录', '直接验收需要一个项目目录。', 400)
+        if (!isDir(dir)) throw userError(`项目目录不存在：${dir}`, '请先创建或选择目录。', 400)
+        const result = await openReviewTerminal({
+          dir,
+          goal: text(body.goal).trim(),
+          focus: text(body.focus).trim(),
+        })
+        return json({ launched: Boolean(result.pid), ...result })
       }),
     },
   ]

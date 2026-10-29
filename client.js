@@ -70,6 +70,12 @@ window.__ModuleLoader__.load({
         acceptanceRun: '立即验收',
         acceptanceSkip: '跳过验收',
         acceptanceRefresh: '刷新',
+        reviewTitle: 'Claude 直接验收（终端可见）',
+        reviewHint: '在项目目录打开一个 Claude Code 终端，由 Claude 直接检查改动、运行测试并写报告；不会经过 DSH 的隐藏验收，也不会自动派发。',
+        reviewFocus: '验收重点 / 任务背景',
+        reviewOpen: '打开终端让 Claude 验收',
+        reviewOpened: '已打开 Claude 验收终端',
+        reviewPath: '报告将写入',
         acceptanceNoSession: '还没有可验收的会话。',
         acceptanceArmed: '已就绪，等待任务 turn 结束',
         acceptanceAsk: '等待你在会话中选择「验收」',
@@ -185,6 +191,12 @@ window.__ModuleLoader__.load({
         acceptanceRun: 'Run acceptance',
         acceptanceSkip: 'Skip acceptance',
         acceptanceRefresh: 'Refresh',
+        reviewTitle: 'Direct Claude review (visible terminal)',
+        reviewHint: 'Open a Claude Code terminal in the project; Claude inspects changes, runs tests, and writes a report. No hidden DSH acceptance and no dispatch.',
+        reviewFocus: 'Review focus / task context',
+        reviewOpen: 'Open terminal and let Claude review',
+        reviewOpened: 'Claude review terminal opened',
+        reviewPath: 'Report will be written to',
         acceptanceNoSession: 'No dispatch to assess yet.',
         acceptanceArmed: 'Armed; waiting for the task turn to finish',
         acceptanceAsk: 'Waiting for your choice in the session',
@@ -472,6 +484,7 @@ window.__ModuleLoader__.load({
         acceptanceList: fetchAcceptanceList,
         runAcceptance,
         skipAcceptance,
+        reviewTerminal,
       } = props
       const tt = useCallback(
         (key, vars) => {
@@ -520,6 +533,8 @@ window.__ModuleLoader__.load({
       const [acceptanceList, setAcceptanceList] = useState([])
       const [acceptanceError, setAcceptanceError] = useState('')
       const [acceptanceBusy, setAcceptanceBusy] = useState(false)
+      const [reviewPath, setReviewPath] = useState('')
+      const [reviewBusy, setReviewBusy] = useState(false)
 
       const update = useCallback((patch) => {
         setForm((current) => ({ ...current, ...patch }))
@@ -690,6 +705,27 @@ window.__ModuleLoader__.load({
           )
         } catch (error) {
           setAcceptanceError(error.message)
+        }
+      }
+
+      async function openReviewNow() {
+        if (form.projectDir.trim().length === 0) {
+          fail(tt('requiredDir'))
+          return
+        }
+        setReviewBusy(true)
+        try {
+          const data = await reviewTerminal({
+            projectDir: form.projectDir,
+            goal: form.goal,
+            focus: form.goal,
+          })
+          setReviewPath(data.reportPath || '')
+          setToast(tt('reviewOpened'))
+        } catch (error) {
+          fail(error.message, error.hint)
+        } finally {
+          setReviewBusy(false)
         }
       }
 
@@ -1564,6 +1600,47 @@ window.__ModuleLoader__.load({
           : null,
       )
 
+      const reviewCard = h(
+        'div',
+        { className: 'cc-card cc-review' },
+        h('div', { className: 'cc-cardTitle' }, tt('reviewTitle')),
+        h('div', { className: 'cc-hint' }, tt('reviewHint')),
+        h(
+          Field,
+          { label: tt('projectDir') },
+          h('input', {
+            className: 'cc-input',
+            value: form.projectDir,
+            placeholder: tt('projectDirPlaceholder'),
+            spellCheck: false,
+            onChange: (event) => update({ projectDir: event.target.value }),
+          }),
+        ),
+        h(
+          Field,
+          { label: tt('reviewFocus') },
+          h('textarea', {
+            className: 'cc-textarea',
+            rows: 4,
+            value: form.goal,
+            placeholder: tt('goalPlaceholder'),
+            onChange: (event) => update({ goal: event.target.value }),
+          }),
+        ),
+        h(
+          'div',
+          { className: 'cc-actions' },
+          h(
+            Button,
+            { variant: 'primary', busy: reviewBusy, disabled: reviewBusy, onClick: openReviewNow },
+            tt('reviewOpen'),
+          ),
+        ),
+        reviewPath
+          ? h('div', { className: 'cc-hint cc-accPath' }, `${tt('reviewPath')}: ${reviewPath}`)
+          : null,
+      )
+
       return h(
         'div',
         { className: 'cc-panel', 'data-panel': panelId },
@@ -1613,6 +1690,7 @@ window.__ModuleLoader__.load({
         notice ? h(Notice, { notice, tt }) : null,
         h('div', { className: 'cc-grid' }, leftCard, rightCard),
         refinedCard,
+        reviewCard,
         acceptanceCard,
         h(
           'div',
@@ -1701,6 +1779,11 @@ window.__ModuleLoader__.load({
           request('/acceptance/skip', {
             method: 'POST',
             body: JSON.stringify({ sessionId }),
+          }),
+        reviewTerminal: (payload) =>
+          request('/acceptance/terminal', {
+            method: 'POST',
+            body: JSON.stringify(payload),
           }),
       })
 
@@ -1914,6 +1997,7 @@ window.__ModuleLoader__.load({
 .cc-code { font-size: 11px; color: var(--dsw-alias-label-secondary); word-break: break-all; }
 .cc-refinedHead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .cc-acceptance { gap: 10px; }
+.cc-review { border-inline-start: 3px solid #D97757; }
 .cc-accHead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cc-verdict {
   display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px;

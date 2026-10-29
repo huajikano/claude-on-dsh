@@ -58,6 +58,13 @@
 - `bypassPermissions` 仅在你自己显式配置时生效，面板不提供该选项。
 - 插件不读取、不写入任何 API key；认证由 Claude Code / CC Switch 的原生配置负责。
 
+## 两种使用方式
+
+1. **派发给 DSH**：Claude 提问 → 你回答 → DSH 执行整案。这个入口**不会**打开 Claude 终端。
+2. **Claude 直接验收**：在面板「Claude 直接验收（终端可见）」卡片里选项目目录，点击后打开一个真实的 Claude Code 终端，由 Claude 检查改动、运行测试、把报告写到 `.dsh/acceptance/visible-*.md`。整个过程在终端里可见，不经过 DSH 的隐藏验收。
+
+自动验收默认 **off**；只有显式把 `acceptance.gatePolicy` 设为 `ask`/`auto` 才会在 DSH turn 结束后跑隐藏验收。
+
 ## 自动验收（Acceptance Gate，1.0.1+）
 
 派发的会话结束后，插件会自动按会话原始事实生成验收报告，而不是采信 DSH 的自我汇报。
@@ -106,7 +113,7 @@
 - id: claude-on-dsh
   config:
     acceptance:
-      gatePolicy: ask          # off | ask | auto
+      gatePolicy: off          # off | ask | auto（默认 off；直接验收用上面的可见终端）
       timeoutMs: 180000        # 单次验收总预算
       askTimeoutMs: 120000     # ask 等待用户回答的上限
       judgeTimeoutMs: 180000   # Claude 判定上限

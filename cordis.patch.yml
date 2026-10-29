@@ -23,7 +23,7 @@
         permissionMode: plan
         timeoutMs: 240000
         acceptance:
-          gatePolicy: ask
+          gatePolicy: off
           timeoutMs: 180000
           askTimeoutMs: 120000
           judgeRetries: 2
