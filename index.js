@@ -18,6 +18,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { attachAcceptance } from './lib/acceptance/host.js'
+import { extractTask } from './lib/acceptance/facts.js'
 
 /** Loader row name. */
 export const name = 'claude-on-dsh'
@@ -1426,12 +1427,36 @@ export function apply(ctx, config = {}) {
         const dir = expand(body.projectDir)
         if (!dir) throw userError('缺少项目目录', '直接验收需要一个项目目录。', 400)
         if (!isDir(dir)) throw userError(`项目目录不存在：${dir}`, '请先创建或选择目录。', 400)
+        let sessionId = text(body.sessionId).trim()
+        if (!sessionId) {
+          const history = await readHistory()
+          const entry = history.find((item) => item.projectDir === dir && item.sessionId)
+          if (entry) sessionId = entry.sessionId
+        }
+        // Claude wrote the first question and the handoff; reuse that task
+        // rather than asking the user to retype the context.
+        let goal = text(body.goal).trim()
+        if (sessionId) {
+          const disk = await readAcceptanceFiles(dir, sessionId)
+          if (disk.report && disk.report.task && disk.report.task.summary) {
+            goal = disk.report.task.summary
+          } else {
+            try {
+              const inspected = await ctx.sessionController.inspect(
+                sessionId,
+                AbortSignal.timeout(20_000),
+              )
+              const task = extractTask(inspected.events)
+              if (task.summary) goal = task.summary
+            } catch {}
+          }
+        }
         const result = await openReviewTerminal({
           dir,
-          goal: text(body.goal).trim(),
+          goal,
           focus: text(body.focus).trim(),
         })
-        return json({ launched: Boolean(result.pid), ...result })
+        return json({ launched: Boolean(result.pid), sessionId, ...result })
       }),
     },
   ]

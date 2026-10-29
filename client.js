@@ -73,6 +73,8 @@ window.__ModuleLoader__.load({
         reviewTitle: 'Claude 直接验收（终端可见）',
         reviewHint: '在项目目录打开一个 Claude Code 终端，由 Claude 直接检查改动、运行测试并写报告；不会经过 DSH 的隐藏验收，也不会自动派发。',
         reviewFocus: '验收重点 / 任务背景',
+        reviewSession: '验收对象（该目录的派发记录）',
+        reviewSessionAuto: '自动：该目录最近一次派发',
         reviewOpen: '打开终端让 Claude 验收',
         reviewOpened: '已打开 Claude 验收终端',
         reviewPath: '报告将写入',
@@ -194,6 +196,8 @@ window.__ModuleLoader__.load({
         reviewTitle: 'Direct Claude review (visible terminal)',
         reviewHint: 'Open a Claude Code terminal in the project; Claude inspects changes, runs tests, and writes a report. No hidden DSH acceptance and no dispatch.',
         reviewFocus: 'Review focus / task context',
+        reviewSession: 'Session to review (dispatch for this folder)',
+        reviewSessionAuto: 'Auto: latest dispatch in this folder',
         reviewOpen: 'Open terminal and let Claude review',
         reviewOpened: 'Claude review terminal opened',
         reviewPath: 'Report will be written to',
@@ -535,6 +539,7 @@ window.__ModuleLoader__.load({
       const [acceptanceBusy, setAcceptanceBusy] = useState(false)
       const [reviewPath, setReviewPath] = useState('')
       const [reviewBusy, setReviewBusy] = useState(false)
+      const [reviewSession, setReviewSession] = useState('')
 
       const update = useCallback((patch) => {
         setForm((current) => ({ ...current, ...patch }))
@@ -661,13 +666,18 @@ window.__ModuleLoader__.load({
       async function loadAcceptanceList() {
         try {
           const data = await fetchAcceptanceList()
-          setAcceptanceList(Array.isArray(data && data.items) ? data.items : [])
-        } catch {}
+          const items = Array.isArray(data && data.items) ? data.items : []
+          setAcceptanceList(items)
+          return items
+        } catch {
+          return []
+        }
       }
 
-      async function runAcceptanceNow() {        const sessionId =
+      async function runAcceptanceNow() {
+        const sessionId =
           (acceptance && acceptance.sessionId) ||
-          (history.find((entry) => entry.sessionId) || {}).sessionId
+          (history.find((entry) => entry.sessionId && entry.sessionId !== 'session-test') || {}).sessionId
         if (!sessionId) {
           fail(tt('acceptanceNoSession'))
           return
@@ -717,8 +727,7 @@ window.__ModuleLoader__.load({
         try {
           const data = await reviewTerminal({
             projectDir: form.projectDir,
-            goal: form.goal,
-            focus: form.goal,
+            sessionId: reviewSession,
           })
           setReviewPath(data.reportPath || '')
           setToast(tt('reviewOpened'))
@@ -730,10 +739,16 @@ window.__ModuleLoader__.load({
       }
 
       useEffect(() => {
-        loadAcceptanceList()
-        if (acceptance || history.length === 0) return
-        const latest = history.find((entry) => entry.sessionId)
-        if (latest) loadAcceptance(latest.sessionId)
+        ;(async () => {
+          const items = await loadAcceptanceList()
+          if (items.length > 0) {
+            if (!acceptance) loadAcceptance(items[0].sessionId)
+            return
+          }
+          if (acceptance || history.length === 0) return
+          const latest = history.find((entry) => entry.sessionId && entry.sessionId !== 'session-test')
+          if (latest) loadAcceptance(latest.sessionId)
+        })()
       }, [history])
 
       useEffect(() => {
@@ -1618,14 +1633,30 @@ window.__ModuleLoader__.load({
         ),
         h(
           Field,
-          { label: tt('reviewFocus') },
-          h('textarea', {
-            className: 'cc-textarea',
-            rows: 4,
-            value: form.goal,
-            placeholder: tt('goalPlaceholder'),
-            onChange: (event) => update({ goal: event.target.value }),
-          }),
+          { label: tt('reviewSession') },
+          h(
+            'select',
+            {
+              className: 'cc-input',
+              value: reviewSession,
+              onChange: (event) => {
+                const sessionId = event.target.value
+                setReviewSession(sessionId)
+                const entry = history.find((item) => item.sessionId === sessionId)
+                if (entry) update({ projectDir: entry.projectDir })
+              },
+            },
+            h('option', { value: '' }, tt('reviewSessionAuto')),
+            history
+              .filter((entry) => entry.sessionId && entry.sessionId !== 'session-test')
+              .map((entry) =>
+                h(
+                  'option',
+                  { value: entry.sessionId, key: entry.sessionId },
+                  `${entry.title || entry.projectDir} · ${entry.sessionId.slice(-8)}`,
+                ),
+              ),
+          ),
         ),
         h(
           'div',
