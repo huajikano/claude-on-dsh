@@ -83,6 +83,14 @@ window.__ModuleLoader__.load({
         autoAcceptanceToggle: '自动验收（1.0.1 风格）',
         manualAcceptanceToggle: '验收面板',
         dshAccept: '交给 DSH 验收',
+        acceptanceCostWarn: '验收会消耗额度；只有点「开始验收」才会执行。',
+        acceptanceModeClaude: 'Claude 直接验收',
+        acceptanceModeDsh: '交给 DSH 验收',
+        acceptanceOpinion: '验收意见（可选）',
+        acceptanceOpinionPlaceholder: '例如：重点检查移动端、不要改样式；只看本次改动。',
+        acceptanceStart: '开始验收',
+        acceptanceCancel: '取消',
+        acceptanceDone: '验收完成',
         dshAcceptOpened: '已把验收任务发回原 DSH 会话',
         reviewPickSession: '请先选择验收对象（该项目的首问会话）',
         acceptanceNoSession: '还没有可验收的会话。',
@@ -213,6 +221,14 @@ window.__ModuleLoader__.load({
         autoAcceptanceToggle: 'Auto acceptance (1.0.1 style)',
         manualAcceptanceToggle: 'Acceptance panel',
         dshAccept: 'Hand off to DSH for acceptance',
+        acceptanceCostWarn: 'Acceptance spends credits; it starts only when you click Start.',
+        acceptanceModeClaude: 'Claude reviews directly',
+        acceptanceModeDsh: 'Hand off to DSH',
+        acceptanceOpinion: 'Acceptance notes (optional)',
+        acceptanceOpinionPlaceholder: 'e.g. focus on mobile, do not change styles, only this change.',
+        acceptanceStart: 'Start acceptance',
+        acceptanceCancel: 'Cancel',
+        acceptanceDone: 'Acceptance complete',
         dshAcceptOpened: 'Acceptance task sent back to the original DSH session',
         reviewPickSession: 'Choose the original first-question session first',
         acceptanceNoSession: 'No dispatch to assess yet.',
@@ -504,6 +520,7 @@ window.__ModuleLoader__.load({
         skipAcceptance,
         reviewTerminal,
         dispatchAcceptance,
+        runClaudeAcceptance,
         getSettings,
         saveSettings,
       } = props
@@ -559,6 +576,7 @@ window.__ModuleLoader__.load({
       const [reviewPath, setReviewPath] = useState('')
       const [reviewBusy, setReviewBusy] = useState(false)
       const [reviewSession, setReviewSession] = useState('')
+      const [dialog, setDialog] = useState(null)
 
       const update = useCallback((patch) => {
         setForm((current) => ({ ...current, ...patch }))
@@ -1029,20 +1047,51 @@ window.__ModuleLoader__.load({
         }
       }
 
-      async function acceptSession(entry) {
+      function openAcceptanceDialog(entry) {
         if (!entry || !entry.sessionId) return
+        setDialog({ entry, mode: 'claude', opinion: '', busy: false, result: null, error: '' })
+      }
+
+      async function confirmAcceptance() {
+        if (!dialog) return
+        const { entry, mode, opinion } = dialog
+        setDialog((current) => (current ? { ...current, busy: true, error: '' } : current))
         try {
-          const data = await dispatchAcceptance({
-            projectDir: entry.projectDir || form.projectDir,
-            sessionId: entry.sessionId,
-          })
-          setToast(tt('dshAcceptOpened'))
-          try {
-            await refreshSessions(data.sessionId)
-          } catch {}
-          openSession(data.sessionId)
+          if (mode === 'dsh') {
+            const data = await dispatchAcceptance({
+              projectDir: entry.projectDir || form.projectDir,
+              sessionId: entry.sessionId,
+              opinion,
+            })
+            setToast(tt('dshAcceptOpened'))
+            setDialog(null)
+            try {
+              await refreshSessions(data.sessionId)
+            } catch {}
+            openSession(data.sessionId)
+          } else {
+            const data = await runClaudeAcceptance({
+              sessionId: entry.sessionId,
+              opinion,
+            })
+            setDialog((current) =>
+              current
+                ? {
+                    ...current,
+                    busy: false,
+                    result: {
+                      overall: data.report && data.report.overall,
+                      status: data.report && data.report.status,
+                      reportPath: data.paths && data.paths.jsonPath,
+                    },
+                  }
+                : current,
+            )
+          }
         } catch (error) {
-          fail(error.message, error.hint)
+          setDialog((current) =>
+            current ? { ...current, busy: false, error: error.message } : current,
+          )
         }
       }
 
@@ -1301,7 +1350,11 @@ window.__ModuleLoader__.load({
               {
                 variant: 'ghost',
                 onClick: () =>
-                  acceptSession({ sessionId: dispatch.sessionId, projectDir: form.projectDir }),
+                  openAcceptanceDialog({
+                    sessionId: dispatch.sessionId,
+                    projectDir: form.projectDir,
+                    title: dispatch.title,
+                  }),
               },
               tt('dshAccept'),
             ),
@@ -1892,7 +1945,7 @@ window.__ModuleLoader__.load({
                           Button,
                           {
                             variant: 'link',
-                            onClick: () => acceptSession(entry),
+                            onClick: () => openAcceptanceDialog(entry),
                           },
                           tt('dshAccept'),
                         )
@@ -1901,6 +1954,101 @@ window.__ModuleLoader__.load({
                 ),
               ),
         ),
+        dialog
+          ? h(
+              'div',
+              { className: 'cc-modalBackdrop', onClick: () => setDialog(null) },
+              h(
+                'div',
+                { className: 'cc-modal', onClick: (event) => event.stopPropagation() },
+                h(
+                  'div',
+                  { className: 'cc-cardTitle' },
+                  `${tt('acceptance')}：${dialog.entry.title || dialog.entry.sessionId}`,
+                ),
+                h('div', { className: 'cc-inlineWarn' }, tt('acceptanceCostWarn')),
+                h(
+                  'div',
+                  { className: 'cc-seg' },
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: dialog.mode === 'claude' ? 'on' : '',
+                      onClick: () =>
+                        setDialog((current) =>
+                          current ? { ...current, mode: 'claude', result: null, error: '' } : current,
+                        ),
+                    },
+                    tt('acceptanceModeClaude'),
+                  ),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: dialog.mode === 'dsh' ? 'on' : '',
+                      onClick: () =>
+                        setDialog((current) =>
+                          current ? { ...current, mode: 'dsh', result: null, error: '' } : current,
+                        ),
+                    },
+                    tt('acceptanceModeDsh'),
+                  ),
+                ),
+                h(
+                  'label',
+                  { className: 'cc-field' },
+                  h('span', { className: 'cc-label' }, tt('acceptanceOpinion')),
+                  h('textarea', {
+                    className: 'cc-textarea',
+                    rows: 4,
+                    value: dialog.opinion,
+                    placeholder: tt('acceptanceOpinionPlaceholder'),
+                    onChange: (event) =>
+                      setDialog((current) =>
+                        current ? { ...current, opinion: event.target.value } : current,
+                      ),
+                  }),
+                ),
+                dialog.error
+                  ? h('div', { className: 'cc-notice' }, h('div', { className: 'cc-noticeBody' }, dialog.error))
+                  : null,
+                dialog.result
+                  ? h(
+                      'div',
+                      { className: 'cc-success' },
+                      h(
+                        'div',
+                        { className: 'cc-successTitle' },
+                        `${tt('acceptanceDone')}：${dialog.result.overall || 'unknown'}`,
+                      ),
+                      dialog.result.reportPath
+                        ? h('code', { className: 'cc-code' }, dialog.result.reportPath)
+                        : null,
+                    )
+                  : null,
+                h(
+                  'div',
+                  { className: 'cc-actions' },
+                  h(
+                    Button,
+                    { variant: 'primary', busy: dialog.busy, disabled: dialog.busy, onClick: confirmAcceptance },
+                    dialog.busy ? tt('acceptanceRunning') : tt('acceptanceStart'),
+                  ),
+                  h(
+                    Button,
+                    { variant: 'ghost', onClick: () => setDialog(null) },
+                    tt('acceptanceSkip'),
+                  ),
+                  h(
+                    Button,
+                    { variant: 'link', onClick: () => setDialog(null) },
+                    tt('acceptanceCancel'),
+                  ),
+                ),
+              ),
+            )
+          : null,
         toast ? h('div', { className: 'cc-toast', role: 'status' }, toast) : null,
       )
     }
@@ -1965,6 +2113,11 @@ window.__ModuleLoader__.load({
           }),
         dispatchAcceptance: (payload) =>
           request('/acceptance/dispatch', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          }),
+        runClaudeAcceptance: (payload) =>
+          request('/acceptance/claude', {
             method: 'POST',
             body: JSON.stringify(payload),
           }),
@@ -2275,6 +2428,16 @@ window.__ModuleLoader__.load({
 .cc-historyPath { font-size: 11px; color: var(--dsw-alias-label-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cc-historyTime { font-size: 11px; color: var(--dsw-alias-label-secondary); white-space: nowrap; }
 .cc-historyMuted { font-size: 11px; color: var(--dsw-alias-label-secondary); opacity: 0.7; }
+.cc-modalBackdrop {
+  position: fixed; inset: 0; z-index: 80; display: grid; place-items: center;
+  background: rgba(0, 0, 0, 0.42); padding: 24px;
+}
+.cc-modal {
+  inline-size: min(560px, 100%); max-block-size: 86vh; overflow: auto;
+  display: flex; flex-direction: column; gap: 12px; padding: 18px;
+  border: 1px solid var(--dsw-alias-border-l2); border-radius: 14px;
+  background: var(--dsw-alias-bg-overlay); box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+}
 .cc-toast {
   position: fixed; inset-block-end: 26px; inset-inline: 0; margin-inline: auto; z-index: 60;
   inline-size: fit-content; padding: 7px 14px; border-radius: 999px;

@@ -18,6 +18,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { attachAcceptance } from './lib/acceptance/host.js'
+import { executeAcceptance } from './lib/acceptance/kernel.js'
 import { extractTask } from './lib/acceptance/facts.js'
 
 /** Loader row name. */
@@ -755,6 +756,36 @@ export function apply(ctx, config = {}) {
     )
   } catch {}
 
+  const acceptanceOptions = {
+    reportDir: (config.acceptance && config.acceptance.reportDir) || '.dsh/acceptance',
+    allowedPaths:
+      config.acceptance && Array.isArray(config.acceptance.allowedPaths)
+        ? config.acceptance.allowedPaths
+        : [],
+    judgeRetries: Number((config.acceptance && config.acceptance.judgeRetries) ?? 2),
+    judgeTimeoutMs: Number((config.acceptance && config.acceptance.judgeTimeoutMs) ?? 180_000),
+    judgeInputMaxChars: Number((config.acceptance && config.acceptance.judgeInputMaxChars) ?? 24_000),
+  }
+
+  const judgeRunner = async ({ prompt, schema, systemPrompt, cwd, timeoutMs }) => {
+    const executable = findCli(settings.claudeCliPath)
+    if (!executable) {
+      throw userError('没有找到 Claude Code CLI，无法进行验收判定', '请先确认 CLI 可用。', 500)
+    }
+    const run = startClaudeRun({
+      executable,
+      prompt,
+      cwd,
+      schema,
+      systemPrompt,
+      permissionMode: 'plan',
+      model: settings.model,
+      timeoutMs,
+      proxy: proxyInfo(),
+    })
+    return run.promise
+  }
+
   // Lean mode: no automatic gate and no session writes. The only acceptance
   // path is the explicit "验收" action that sends a brief back to the original
   // DSH session. The legacy 1.0.1-style gate is opt-in via
@@ -764,24 +795,7 @@ export function apply(ctx, config = {}) {
     ? attachAcceptance({
         ctx,
         config,
-        runJudge: async ({ prompt, schema, systemPrompt, cwd, timeoutMs }) => {
-          const executable = findCli(settings.claudeCliPath)
-          if (!executable) {
-            throw userError('没有找到 Claude Code CLI，无法进行验收判定', '请先确认 CLI 可用。', 500)
-          }
-          const run = startClaudeRun({
-            executable,
-            prompt,
-            cwd,
-            schema,
-            systemPrompt,
-            permissionMode: 'plan',
-            model: settings.model,
-            timeoutMs,
-            proxy: proxyInfo(),
-          })
-          return run.promise
-        },
+        runJudge: judgeRunner,
         logger: (line) => {
           try {
             ctx.logger?.info?.(line)
@@ -801,6 +815,28 @@ export function apply(ctx, config = {}) {
       }
 
   acceptance.setAuto(acceptanceSettings.autoAcceptance)
+
+  async function runManualAcceptance(sessionId, opinion = '') {
+    const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(60_000))
+    const workspace = inspected.meta && inspected.meta.cwd
+    if (!workspace) throw userError('会话缺少 workspace，无法验收', '', 400)
+    return executeAcceptance({
+      sessionId,
+      meta: inspected.meta,
+      events: inspected.events,
+      workspace,
+      gatePolicy: 'manual',
+      runJudge: judgeRunner,
+      options: { ...acceptanceOptions, opinion },
+      logger: (line) => {
+        try {
+          ctx.logger?.info?.(`[claude-on-dsh:acceptance] ${line}`)
+        } catch {
+          console.log(line)
+        }
+      },
+    })
+  }
 
   const ACCEPTANCE_ID = /^session-[A-Za-z0-9-]+$/
 
@@ -1515,6 +1551,8 @@ export function apply(ctx, config = {}) {
             } catch {}
           }
         }
+        const opinion = text(body.opinion).trim()
+        if (opinion) goal = `${goal}${goal ? '\n\n' : ''}用户验收意见：${opinion}`
         const titleBase = path.basename(dir)
         const reportPath = path.join(dir, '.dsh', 'acceptance', 'dsh-验收.md')
         const executable = findCli(settings.claudeCliPath)
@@ -1604,6 +1642,21 @@ export function apply(ctx, config = {}) {
           brief,
           reportPath,
           reused: true,
+        })
+      }),
+    },
+    {
+      path: '/acceptance/claude',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        const sessionId = text(body.sessionId).trim()
+        if (!sessionId) throw userError('缺少会话 id')
+        const result = await runManualAcceptance(sessionId, text(body.opinion).trim())
+        return json({
+          report: result.report,
+          paths: result.paths,
+          writeError: result.writeError,
         })
       }),
     },
