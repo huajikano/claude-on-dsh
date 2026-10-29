@@ -778,6 +778,65 @@ export function apply(ctx, config = {}) {
     },
   })
 
+  const ACCEPTANCE_ID = /^session-[A-Za-z0-9-]+$/
+
+  async function readAcceptanceFiles(workspace, sessionId) {
+    if (!workspace || !ACCEPTANCE_ID.test(sessionId)) return { report: null, markdown: '', dir: '' }
+    const dir = path.join(workspace, '.dsh', 'acceptance')
+    try {
+      const report = JSON.parse(await readFile(path.join(dir, `${sessionId}.json`), 'utf8'))
+      let markdown = ''
+      try {
+        markdown = await readFile(path.join(dir, `${sessionId}.md`), 'utf8')
+      } catch {}
+      return { report, markdown, dir }
+    } catch {
+      return { report: null, markdown: '', dir }
+    }
+  }
+
+  async function acceptancePayload(sessionId) {
+    const state = acceptance.status(sessionId)
+    const history = await readHistory()
+    const entry = history.find((item) => item.sessionId === sessionId)
+    const workspace = (state && state.workspace) || (entry && entry.projectDir) || ''
+    const disk = await readAcceptanceFiles(workspace, sessionId)
+    const report = (state && state.report) || disk.report
+    return {
+      sessionId,
+      state: state || null,
+      gatePolicy: acceptance.gatePolicy,
+      workspace,
+      report,
+      markdown: disk.markdown,
+      reportPath: report ? path.join(disk.dir, `${sessionId}.json`) : '',
+      markdownPath: report ? path.join(disk.dir, `${sessionId}.md`) : '',
+      title: entry ? entry.title : '',
+    }
+  }
+
+  async function acceptanceList() {
+    const history = await readHistory()
+    const items = []
+    for (const entry of history) {
+      if (!entry.sessionId || !entry.projectDir) continue
+      const disk = await readAcceptanceFiles(entry.projectDir, entry.sessionId)
+      if (!disk.report) continue
+      items.push({
+        sessionId: entry.sessionId,
+        title: entry.title || entry.projectDir,
+        workspace: entry.projectDir,
+        overall: disk.report.overall,
+        status: disk.report.status,
+        gatePolicy: disk.report.gatePolicy,
+        generatedAt: disk.report.generatedAt,
+        reportPath: path.join(disk.dir, `${entry.sessionId}.json`),
+      })
+      if (items.length >= 12) break
+    }
+    return items
+  }
+
   async function cliInfo() {
     const path = findCli(settings.claudeCliPath)
     if (path !== cliCache.path || Date.now() - cliCache.checkedAt > CLI_PROBE_TTL_MS) {
@@ -1237,6 +1296,32 @@ export function apply(ctx, config = {}) {
           goal: text(body.goal),
         })
         return json({ prompt })
+      }),
+    },
+    {
+      path: '/acceptance',
+      methods: ['GET'],
+      handler: endpoint(async (request) => {
+        const id = new URL(request.url).searchParams.get('id') || ''
+        if (!id) throw userError('缺少会话 id')
+        return json(await acceptancePayload(id))
+      }),
+    },
+    {
+      path: '/acceptance/list',
+      methods: ['GET'],
+      handler: endpoint(async () => json({ gatePolicy: acceptance.gatePolicy, items: await acceptanceList() })),
+    },
+    {
+      path: '/acceptance/run',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        const sessionId = text(body.sessionId).trim()
+        if (!sessionId) throw userError('缺少会话 id')
+        // Fire-and-forget: the panel polls /acceptance for state/report.
+        acceptance.runManual(sessionId).catch(() => {})
+        return json({ started: true, sessionId })
       }),
     },
   ]

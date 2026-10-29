@@ -64,6 +64,26 @@ window.__ModuleLoader__.load({
         permissionLabel: '会话权限',
         fullAccess: '完全权限（danger-full-access）',
         permissionFallback: '完全权限切换失败，已退回仅关闭审批',
+        acceptance: 'Claude 验收',
+        acceptanceHint: '派发任务结束后自动触发；这里显示 Claude 的验收进度、结论与证据。',
+        acceptanceState: '状态',
+        acceptanceRun: '立即验收',
+        acceptanceRefresh: '刷新',
+        acceptanceNoSession: '还没有可验收的会话。',
+        acceptanceArmed: '已就绪，等待任务 turn 结束',
+        acceptanceAsk: '等待你在会话中选择「验收」',
+        acceptanceRunning: 'Claude 验收中…',
+        acceptanceCompleted: 'Claude 验收完成',
+        acceptanceSkipped: '已跳过验收',
+        acceptanceFailed: '验收失败',
+        acceptanceIdle: '尚未验收',
+        acceptanceOff: '自动验收已关闭',
+        acceptanceEvidence: '证据',
+        acceptanceMissing: '缺失判据',
+        acceptanceRework: '返工建议',
+        acceptanceReport: '报告路径',
+        acceptanceRecent: '最近验收',
+        gatePolicy: '策略',
         dispatched: '已派发，DSH 开始执行',
         openSession: '打开会话',
         newProject: '再开一个项目',
@@ -158,6 +178,26 @@ window.__ModuleLoader__.load({
         permissionLabel: 'Session permission',
         fullAccess: 'Full access (danger-full-access)',
         permissionFallback: 'Could not switch to full access; approvals were disabled only',
+        acceptance: 'Claude acceptance',
+        acceptanceHint: 'Runs after the dispatched task turn; progress, verdict, and evidence appear here.',
+        acceptanceState: 'State',
+        acceptanceRun: 'Run acceptance',
+        acceptanceRefresh: 'Refresh',
+        acceptanceNoSession: 'No dispatch to assess yet.',
+        acceptanceArmed: 'Armed; waiting for the task turn to finish',
+        acceptanceAsk: 'Waiting for your choice in the session',
+        acceptanceRunning: 'Claude is assessing…',
+        acceptanceCompleted: 'Claude acceptance completed',
+        acceptanceSkipped: 'Acceptance skipped',
+        acceptanceFailed: 'Acceptance failed',
+        acceptanceIdle: 'Not assessed yet',
+        acceptanceOff: 'Automatic acceptance is off',
+        acceptanceEvidence: 'Evidence',
+        acceptanceMissing: 'Missing facts',
+        acceptanceRework: 'Rework',
+        acceptanceReport: 'Report path',
+        acceptanceRecent: 'Recent assessments',
+        gatePolicy: 'Policy',
         dispatched: 'Dispatched; DSH is executing',
         openSession: 'Open session',
         newProject: 'Start another project',
@@ -426,6 +466,9 @@ window.__ModuleLoader__.load({
         openSession,
         dispatchTask,
         archiveTask,
+        acceptanceStatus,
+        acceptanceList: fetchAcceptanceList,
+        runAcceptance,
       } = props
       const tt = useCallback(
         (key, vars) => {
@@ -470,6 +513,10 @@ window.__ModuleLoader__.load({
       const [consumedJobId, setConsumedJobId] = useState(() =>
         restored ? restored.consumedJobId ?? null : null,
       )
+      const [acceptance, setAcceptance] = useState(null)
+      const [acceptanceList, setAcceptanceList] = useState([])
+      const [acceptanceError, setAcceptanceError] = useState('')
+      const [acceptanceBusy, setAcceptanceBusy] = useState(false)
 
       const update = useCallback((patch) => {
         setForm((current) => ({ ...current, ...patch }))
@@ -581,6 +628,63 @@ window.__ModuleLoader__.load({
         const timer = setTimeout(() => setToast(''), 2200)
         return () => clearTimeout(timer)
       }, [toast])
+
+      async function loadAcceptance(sessionId) {
+        if (!sessionId) return
+        try {
+          const data = await acceptanceStatus(sessionId)
+          setAcceptance(data)
+          setAcceptanceError('')
+        } catch (error) {
+          setAcceptanceError(error.message)
+        }
+      }
+
+      async function loadAcceptanceList() {
+        try {
+          const data = await fetchAcceptanceList()
+          setAcceptanceList(Array.isArray(data && data.items) ? data.items : [])
+        } catch {}
+      }
+
+      async function runAcceptanceNow() {
+        const sessionId =
+          (acceptance && acceptance.sessionId) ||
+          (history.find((entry) => entry.sessionId) || {}).sessionId
+        if (!sessionId) {
+          fail(tt('acceptanceNoSession'))
+          return
+        }
+        setAcceptanceBusy(true)
+        try {
+          await runAcceptance(sessionId)
+          setAcceptance((current) =>
+            current && current.sessionId === sessionId
+              ? { ...current, state: { ...(current.state || {}), state: 'running', phase: tt('acceptanceRunning') } }
+              : current,
+          )
+          setTimeout(() => loadAcceptance(sessionId), 600)
+        } catch (error) {
+          setAcceptanceError(error.message)
+        } finally {
+          setTimeout(() => setAcceptanceBusy(false), 1500)
+        }
+      }
+
+      useEffect(() => {
+        loadAcceptanceList()
+        if (acceptance || history.length === 0) return
+        const latest = history.find((entry) => entry.sessionId)
+        if (latest) loadAcceptance(latest.sessionId)
+      }, [history])
+
+      useEffect(() => {
+        const phase = acceptance && acceptance.state ? acceptance.state.state : ''
+        if (!['armed', 'asking', 'running'].includes(phase)) return
+        const sessionId = acceptance.sessionId
+        const timer = setInterval(() => loadAcceptance(sessionId), 1500)
+        return () => clearInterval(timer)
+      }, [acceptance && acceptance.state ? acceptance.state.state : '', acceptance && acceptance.sessionId])
 
       const cliReady = Boolean(detect && detect.cli && detect.cli.found && detect.cli.runnable)
       const desktopReady = Boolean(detect && detect.desktop && detect.desktop.found)
@@ -701,6 +805,8 @@ window.__ModuleLoader__.load({
           try {
             await refreshSessions(data.sessionId)
           } catch {}
+          loadAcceptance(data.sessionId)
+          loadAcceptanceList()
         } catch (error) {
           setDispatch({ state: 'error', message: error.message, hint: error.hint })
         }
@@ -1250,6 +1356,183 @@ window.__ModuleLoader__.load({
           )
         : null
 
+      function verdictClass(conclusion) {
+        return conclusion === 'pass' ? 'pass' : conclusion === 'fail' ? 'fail' : 'uncertain'
+      }
+
+      function acceptanceLabel(data) {
+        const state = data && data.state ? data.state.state : ''
+        if (state === 'armed') return tt('acceptanceArmed')
+        if (state === 'asking') return tt('acceptanceAsk')
+        if (state === 'running') return tt('acceptanceRunning')
+        if (state === 'completed') return tt('acceptanceCompleted')
+        if (state === 'skipped') return tt('acceptanceSkipped')
+        if (state === 'failed') return tt('acceptanceFailed')
+        if (state === 'off') return tt('acceptanceOff')
+        return data && data.report ? tt('acceptanceCompleted') : tt('acceptanceIdle')
+      }
+
+      const acceptanceReport = acceptance && acceptance.report ? acceptance.report : null
+      const acceptanceState = acceptance && acceptance.state ? acceptance.state : null
+      const acceptanceCard = h(
+        'div',
+        { className: 'cc-card cc-acceptance' },
+        h(
+          'div',
+          { className: 'cc-refinedHead' },
+          h('div', { className: 'cc-cardTitle' }, tt('acceptance')),
+          h(
+            'div',
+            { className: 'cc-chips' },
+            h(Chip, {
+              on: !acceptance || acceptance.gatePolicy !== 'off',
+              label: `${tt('gatePolicy')}: ${acceptance ? acceptance.gatePolicy : 'ask'}`,
+            }),
+            h(Chip, {
+              on: Boolean(acceptanceState && acceptanceState.state === 'completed'),
+              warn: Boolean(acceptanceState && acceptanceState.state === 'failed'),
+              label: acceptanceLabel(acceptance),
+            }),
+          ),
+        ),
+        h('div', { className: 'cc-hint' }, tt('acceptanceHint')),
+        acceptanceError ? h(Notice, { notice: { message: acceptanceError }, tt }) : null,
+        !acceptance ? h('div', { className: 'cc-hint' }, tt('acceptanceNoSession')) : null,
+        acceptance
+          ? h(
+              'div',
+              { className: 'cc-accHead' },
+              h(
+                'span',
+                {
+                  className: `cc-verdict ${
+                    acceptanceReport ? verdictClass(acceptanceReport.overall) : acceptanceState && acceptanceState.state === 'failed' ? 'fail' : 'uncertain'
+                  }`,
+                },
+                acceptanceReport ? acceptanceReport.overall.toUpperCase() : acceptanceLabel(acceptance),
+              ),
+              h('span', { className: 'cc-hint' }, acceptance.sessionId || ''),
+              acceptanceState && acceptanceState.phase ? h('span', { className: 'cc-hint' }, acceptanceState.phase) : null,
+            )
+          : null,
+        acceptanceReport
+          ? h(
+              React.Fragment,
+              null,
+              h(
+                'div',
+                { className: 'cc-accMeta' },
+                h('span', { className: 'cc-hint' }, `judge: ${acceptanceReport.meta.judge.status}`),
+                h('span', { className: 'cc-hint' }, `${Math.round(acceptanceReport.meta.durationMs / 1000)}s`),
+                h('span', { className: 'cc-hint' }, acceptanceReport.generatedAt),
+              ),
+              h(
+                'div',
+                { className: 'cc-accChecks' },
+                acceptanceReport.checks.map((check) =>
+                  h(
+                    'div',
+                    { className: 'cc-accCheck', key: check.id },
+                    h('span', { className: `cc-verdict ${verdictClass(check.conclusion)}` }, check.conclusion),
+                    h('span', { className: 'cc-accCheckName' }, check.name),
+                    h('div', { className: 'cc-hint' }, check.note),
+                    check.evidence.length > 0
+                      ? h(
+                          'details',
+                          { className: 'cc-details' },
+                          h('summary', null, `${tt('acceptanceEvidence')} (${check.evidence.length})`),
+                          check.evidence.map((item) =>
+                            h(
+                              'div',
+                              { className: 'cc-evidence', key: item.id },
+                              h('code', null, item.locator),
+                              h('pre', { className: 'cc-evidenceExcerpt' }, item.excerpt),
+                            ),
+                          ),
+                        )
+                      : null,
+                  ),
+                ),
+              ),
+              acceptanceReport.missing.length > 0
+                ? h(
+                    'div',
+                    { className: 'cc-accSection' },
+                    h('div', { className: 'cc-sectionTitle' }, tt('acceptanceMissing')),
+                    h(
+                      'ul',
+                      { className: 'cc-ul' },
+                      acceptanceReport.missing.map((item, index) => h('li', { key: `am-${index}` }, item)),
+                    ),
+                  )
+                : null,
+              acceptanceReport.rework.length > 0
+                ? h(
+                    'div',
+                    { className: 'cc-accSection' },
+                    h('div', { className: 'cc-sectionTitle' }, tt('acceptanceRework')),
+                    h(
+                      'ul',
+                      { className: 'cc-ul' },
+                      acceptanceReport.rework.map((item, index) => h('li', { key: `ar-${index}` }, item)),
+                    ),
+                  )
+                : null,
+              acceptance.reportPath
+                ? h('div', { className: 'cc-hint cc-accPath' }, `${tt('acceptanceReport')}: ${acceptance.reportPath}`)
+                : null,
+            )
+          : null,
+        h(
+          'div',
+          { className: 'cc-actions' },
+          h(
+            Button,
+            {
+              variant: 'primary',
+              busy: acceptanceBusy,
+              disabled:
+                acceptanceBusy ||
+                Boolean(acceptanceState && ['running', 'asking'].includes(acceptanceState.state)),
+              onClick: runAcceptanceNow,
+            },
+            tt('acceptanceRun'),
+          ),
+          h(
+            Button,
+            {
+              variant: 'ghost',
+              onClick: () => {
+                loadAcceptanceList()
+                if (acceptance && acceptance.sessionId) loadAcceptance(acceptance.sessionId)
+              },
+            },
+            tt('acceptanceRefresh'),
+          ),
+        ),
+        acceptanceList.length > 0
+          ? h(
+              'div',
+              { className: 'cc-accRecent' },
+              h('div', { className: 'cc-sectionTitle' }, tt('acceptanceRecent')),
+              acceptanceList.slice(0, 6).map((item) =>
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'cc-accRecentItem',
+                    key: item.sessionId,
+                    onClick: () => loadAcceptance(item.sessionId),
+                  },
+                  h('span', { className: `cc-verdict ${verdictClass(item.overall)}` }, item.overall),
+                  h('span', { className: 'cc-accRecentTitle' }, item.title || item.sessionId),
+                  h('span', { className: 'cc-hint' }, timeText(new Date(item.generatedAt).getTime())),
+                ),
+              ),
+            )
+          : null,
+      )
+
       return h(
         'div',
         { className: 'cc-panel', 'data-panel': panelId },
@@ -1299,6 +1582,7 @@ window.__ModuleLoader__.load({
         notice ? h(Notice, { notice, tt }) : null,
         h('div', { className: 'cc-grid' }, leftCard, rightCard),
         refinedCard,
+        acceptanceCard,
         h(
           'div',
           { className: 'cc-history' },
@@ -1372,6 +1656,13 @@ window.__ModuleLoader__.load({
           }),
         archiveTask: (sessionId) =>
           request('/archive', {
+            method: 'POST',
+            body: JSON.stringify({ sessionId }),
+          }),
+        acceptanceStatus: (sessionId) => request(`/acceptance?id=${encodeURIComponent(sessionId)}`),
+        acceptanceList: () => request('/acceptance/list'),
+        runAcceptance: (sessionId) =>
+          request('/acceptance/run', {
             method: 'POST',
             body: JSON.stringify({ sessionId }),
           }),
@@ -1586,6 +1877,53 @@ window.__ModuleLoader__.load({
 .cc-successBody { color: var(--dsw-alias-label-secondary); }
 .cc-code { font-size: 11px; color: var(--dsw-alias-label-secondary); word-break: break-all; }
 .cc-refinedHead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.cc-acceptance { gap: 10px; }
+.cc-accHead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cc-verdict {
+  display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase;
+  border: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-secondary);
+}
+.cc-verdict.pass {
+  color: var(--dsw-alias-state-success-primary);
+  border-color: color-mix(in oklab, var(--dsw-alias-state-success-primary) 45%, transparent);
+  background: color-mix(in oklab, var(--dsw-alias-state-success-primary) 9%, transparent);
+}
+.cc-verdict.fail {
+  color: var(--dsw-alias-state-error-primary);
+  border-color: color-mix(in oklab, var(--dsw-alias-state-error-primary) 45%, transparent);
+  background: color-mix(in oklab, var(--dsw-alias-state-error-primary) 9%, transparent);
+}
+.cc-verdict.uncertain {
+  color: var(--dsw-alias-state-warn-primary);
+  border-color: color-mix(in oklab, var(--dsw-alias-state-warn-primary) 45%, transparent);
+  background: color-mix(in oklab, var(--dsw-alias-state-warn-primary) 9%, transparent);
+}
+.cc-accMeta { display: flex; gap: 10px; flex-wrap: wrap; }
+.cc-accChecks { display: flex; flex-direction: column; gap: 8px; }
+.cc-accCheck {
+  display: flex; flex-direction: column; gap: 4px; min-inline-size: 0;
+  padding: 8px 10px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+}
+.cc-accCheckName { font-size: 12.5px; font-weight: 500; }
+.cc-evidence { margin-block-start: 6px; }
+.cc-evidence code { font-size: 11px; color: var(--dsw-alias-label-secondary); word-break: break-all; }
+.cc-evidenceExcerpt {
+  margin: 4px 0 0; padding: 6px 8px; max-block-size: 140px; overflow: auto;
+  white-space: pre-wrap; font-size: 11px; line-height: 1.5;
+  background: var(--dsw-alias-bg-layer-1); border-radius: 6px; color: var(--dsw-alias-label-secondary);
+}
+.cc-accSection { display: flex; flex-direction: column; gap: 4px; }
+.cc-accPath { word-break: break-all; }
+.cc-accRecent { display: flex; flex-direction: column; gap: 4px; }
+.cc-accRecentItem {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer;
+  border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px;
+  background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; text-align: start;
+}
+.cc-accRecentItem:hover { background: var(--dsw-alias-bg-layer-2); }
+.cc-accRecentTitle { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .cc-history { display: flex; flex-direction: column; gap: 8px; padding-block-start: 4px; }
 .cc-historyList { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .cc-historyList li {
