@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 import { apply } from '../../index.js'
+
+// Keep test dispatches out of the real profile history.
+process.env.DSH_HOME = path.join(os.tmpdir(), 'claude-on-dsh-regression-home')
 
 function createFakeContext() {
   const routes = new Map()

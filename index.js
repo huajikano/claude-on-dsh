@@ -699,7 +699,7 @@ function historyFile() {
 async function readHistory() {
   try {
     const raw = await readFile(historyFile(), 'utf8')
-    const parsed = JSON.parse(raw)
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ''))
     return Array.isArray(parsed) ? parsed.filter((entry) => entry && typeof entry === 'object') : []
   } catch {
     return []
