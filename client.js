@@ -79,6 +79,7 @@ window.__ModuleLoader__.load({
         reviewOpened: '已打开 Claude 验收终端',
         reviewPath: '报告将写入',
         acceptanceSection: 'Claude 验收（可选，展开查看）',
+        acceptanceShow: '显示验收',
         dshAccept: '交给 DSH 验收',
         dshAcceptOpened: '已把验收任务发回原 DSH 会话',
         reviewPickSession: '请先选择验收对象（该项目的首问会话）',
@@ -206,6 +207,7 @@ window.__ModuleLoader__.load({
         reviewOpened: 'Claude review terminal opened',
         reviewPath: 'Report will be written to',
         acceptanceSection: 'Claude acceptance (optional; expand)',
+        acceptanceShow: 'Show acceptance',
         dshAccept: 'Hand off to DSH for acceptance',
         dshAcceptOpened: 'Acceptance task sent back to the original DSH session',
         reviewPickSession: 'Choose the original first-question session first',
@@ -546,9 +548,7 @@ window.__ModuleLoader__.load({
       const [acceptanceList, setAcceptanceList] = useState([])
       const [acceptanceError, setAcceptanceError] = useState('')
       const [acceptanceBusy, setAcceptanceBusy] = useState(false)
-      const [acceptanceHidden, setAcceptanceHidden] = useState(() =>
-        Boolean(restored && restored.acceptanceHidden),
-      )
+      const [acceptanceHidden, setAcceptanceHidden] = useState(false)
       const [reviewPath, setReviewPath] = useState('')
       const [reviewBusy, setReviewBusy] = useState(false)
       const [reviewSession, setReviewSession] = useState('')
@@ -576,11 +576,10 @@ window.__ModuleLoader__.load({
               phase,
               dispatch,
               consumedJobId,
-              acceptanceHidden,
             }),
           )
         } catch {}
-      }, [form, job, brief, answer, refined, promptText, desktopPrompt, desktopReply, phase, dispatch, consumedJobId, acceptanceHidden])
+      }, [form, job, brief, answer, refined, promptText, desktopPrompt, desktopReply, phase, dispatch, consumedJobId])
 
       /* Environment and history: read once, then refresh while active. */
       useEffect(() => {
@@ -920,6 +919,7 @@ window.__ModuleLoader__.load({
             permissionWarning: data.permissionWarning,
           })
           setPhase('dispatched')
+          setAcceptanceHidden(false)
           if (data.record) {
             setHistory((current) => [data.record].concat(current).slice(0, 24))
           }
@@ -1759,6 +1759,13 @@ window.__ModuleLoader__.load({
             h(Chip, { on: desktopReady, label: tt('statusDesktop') }),
             h(Chip, { on: proxyReady, warn: detect ? !proxyReady : false, label: tt('statusProxy') }),
             h(Chip, { on: ccSwitchReady, label: tt('statusCcSwitch') }),
+            acceptanceHidden
+              ? h(
+                  Button,
+                  { variant: 'link', onClick: () => setAcceptanceHidden(false) },
+                  tt('acceptanceShow'),
+                )
+              : null,
           ),
         ),
         h(
