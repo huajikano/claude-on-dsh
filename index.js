@@ -746,6 +746,15 @@ export function apply(ctx, config = {}) {
     return { url: claudeSettings.baseUrl, host: '', port: 0, reachable: false, local: true }
   }
 
+  const acceptanceSettingsFile = path.join(dshHome(), 'claude-on-dsh', 'settings.json')
+  const acceptanceSettings = { autoAcceptance: true, manualAcceptance: true }
+  try {
+    Object.assign(
+      acceptanceSettings,
+      JSON.parse(readFileSync(acceptanceSettingsFile, 'utf8').replace(/^\uFEFF/, '')),
+    )
+  } catch {}
+
   // Acceptance Gate: the hook only observes armed sessions and never throws
   // into the Session lifecycle. The judge reuses the same unattended CLI run
   // in read-only plan mode, so acceptance can never modify the project.
@@ -778,6 +787,8 @@ export function apply(ctx, config = {}) {
       }
     },
   })
+
+  acceptance.setAuto(acceptanceSettings.autoAcceptance)
 
   const ACCEPTANCE_ID = /^session-[A-Za-z0-9-]+$/
 
@@ -1582,6 +1593,29 @@ export function apply(ctx, config = {}) {
           reportPath,
           reused: true,
         })
+      }),
+    },
+    {
+      path: '/settings',
+      methods: ['GET', 'POST'],
+      handler: endpoint(async (request) => {
+        if (request.method === 'POST') {
+          const body = await readBody(request)
+          if (typeof body.autoAcceptance === 'boolean') {
+            acceptanceSettings.autoAcceptance = body.autoAcceptance
+          }
+          if (typeof body.manualAcceptance === 'boolean') {
+            acceptanceSettings.manualAcceptance = body.manualAcceptance
+          }
+          await mkdir(path.dirname(acceptanceSettingsFile), { recursive: true })
+          await writeFile(
+            acceptanceSettingsFile,
+            `${JSON.stringify(acceptanceSettings, null, 2)}\n`,
+            'utf8',
+          )
+          acceptance.setAuto(acceptanceSettings.autoAcceptance)
+        }
+        return json(acceptanceSettings)
       }),
     },
   ]

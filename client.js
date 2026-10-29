@@ -80,6 +80,8 @@ window.__ModuleLoader__.load({
         reviewPath: '报告将写入',
         acceptanceSection: 'Claude 验收（可选，展开查看）',
         acceptanceShow: '显示验收',
+        autoAcceptanceToggle: '自动验收（1.0.1 风格）',
+        manualAcceptanceToggle: '验收面板',
         dshAccept: '交给 DSH 验收',
         dshAcceptOpened: '已把验收任务发回原 DSH 会话',
         reviewPickSession: '请先选择验收对象（该项目的首问会话）',
@@ -208,6 +210,8 @@ window.__ModuleLoader__.load({
         reviewPath: 'Report will be written to',
         acceptanceSection: 'Claude acceptance (optional; expand)',
         acceptanceShow: 'Show acceptance',
+        autoAcceptanceToggle: 'Auto acceptance (1.0.1 style)',
+        manualAcceptanceToggle: 'Acceptance panel',
         dshAccept: 'Hand off to DSH for acceptance',
         dshAcceptOpened: 'Acceptance task sent back to the original DSH session',
         reviewPickSession: 'Choose the original first-question session first',
@@ -500,6 +504,8 @@ window.__ModuleLoader__.load({
         skipAcceptance,
         reviewTerminal,
         dispatchAcceptance,
+        getSettings,
+        saveSettings,
       } = props
       const tt = useCallback(
         (key, vars) => {
@@ -549,6 +555,7 @@ window.__ModuleLoader__.load({
       const [acceptanceError, setAcceptanceError] = useState('')
       const [acceptanceBusy, setAcceptanceBusy] = useState(false)
       const [acceptanceHidden, setAcceptanceHidden] = useState(false)
+      const [settings, setSettings] = useState({ autoAcceptance: true, manualAcceptance: true })
       const [reviewPath, setReviewPath] = useState('')
       const [reviewBusy, setReviewBusy] = useState(false)
       const [reviewSession, setReviewSession] = useState('')
@@ -663,6 +670,12 @@ window.__ModuleLoader__.load({
         const timer = setTimeout(() => setToast(''), 2200)
         return () => clearTimeout(timer)
       }, [toast])
+
+      useEffect(() => {
+        getSettings()
+          .then((data) => setSettings((current) => ({ ...current, ...data })))
+          .catch(() => {})
+      }, [])
 
       async function loadAcceptance(sessionId) {
         if (!sessionId) return
@@ -1550,11 +1563,17 @@ window.__ModuleLoader__.load({
               ),
               h(
                 'div',
+                { className: `cc-verdictBanner ${verdictClass(acceptanceReport.overall)}` },
+                h('strong', null, acceptanceReport.overall.toUpperCase()),
+                h('span', null, acceptanceReport.meta.summary || ''),
+              ),
+              h(
+                'div',
                 { className: 'cc-accChecks' },
                 acceptanceReport.checks.map((check) =>
                   h(
                     'div',
-                    { className: 'cc-accCheck', key: check.id },
+                    { className: `cc-accCheck cc-${verdictClass(check.conclusion)}`, key: check.id },
                     h('span', { className: `cc-verdict ${verdictClass(check.conclusion)}` }, check.conclusion),
                     h('span', { className: 'cc-accCheckName' }, check.name),
                     h('div', { className: 'cc-hint' }, check.note),
@@ -1730,6 +1749,38 @@ window.__ModuleLoader__.load({
         'details',
         { className: 'cc-accDetails' },
         h('summary', null, tt('acceptanceSection')),
+        h(
+          'div',
+          { className: 'cc-accToggles' },
+          h(
+            'label',
+            { className: 'cc-switch' },
+            h('input', {
+              type: 'checkbox',
+              checked: Boolean(settings.autoAcceptance),
+              onChange: (event) => {
+                const value = event.target.checked
+                setSettings((current) => ({ ...current, autoAcceptance: value }))
+                saveSettings({ autoAcceptance: value })
+              },
+            }),
+            tt('autoAcceptanceToggle'),
+          ),
+          h(
+            'label',
+            { className: 'cc-switch' },
+            h('input', {
+              type: 'checkbox',
+              checked: Boolean(settings.manualAcceptance),
+              onChange: (event) => {
+                const value = event.target.checked
+                setSettings((current) => ({ ...current, manualAcceptance: value }))
+                saveSettings({ manualAcceptance: value })
+              },
+            }),
+            tt('manualAcceptanceToggle'),
+          ),
+        ),
         acceptanceCard,
         reviewCard,
       )
@@ -1759,10 +1810,19 @@ window.__ModuleLoader__.load({
             h(Chip, { on: desktopReady, label: tt('statusDesktop') }),
             h(Chip, { on: proxyReady, warn: detect ? !proxyReady : false, label: tt('statusProxy') }),
             h(Chip, { on: ccSwitchReady, label: tt('statusCcSwitch') }),
-            acceptanceHidden
+            acceptanceHidden || !settings.manualAcceptance
               ? h(
                   Button,
-                  { variant: 'link', onClick: () => setAcceptanceHidden(false) },
+                  {
+                    variant: 'link',
+                    onClick: () => {
+                      setAcceptanceHidden(false)
+                      if (!settings.manualAcceptance) {
+                        setSettings((current) => ({ ...current, manualAcceptance: true }))
+                        saveSettings({ manualAcceptance: true })
+                      }
+                    },
+                  },
                   tt('acceptanceShow'),
                 )
               : null,
@@ -1790,7 +1850,7 @@ window.__ModuleLoader__.load({
         notice ? h(Notice, { notice, tt }) : null,
         h('div', { className: 'cc-grid' }, leftCard, rightCard),
         refinedCard,
-        acceptanceHidden ? null : acceptanceSection,
+        acceptanceHidden || !settings.manualAcceptance ? null : acceptanceSection,
         h(
           'div',
           { className: 'cc-history' },
@@ -1888,6 +1948,12 @@ window.__ModuleLoader__.load({
           request('/acceptance/dispatch', {
             method: 'POST',
             body: JSON.stringify(payload),
+          }),
+        getSettings: () => request('/settings'),
+        saveSettings: (patch) =>
+          request('/settings', {
+            method: 'POST',
+            body: JSON.stringify(patch),
           }),
       })
 
@@ -2101,6 +2167,24 @@ window.__ModuleLoader__.load({
 .cc-code { font-size: 11px; color: var(--dsw-alias-label-secondary); word-break: break-all; }
 .cc-refinedHead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .cc-acceptance { gap: 10px; }
+.cc-accToggles { display: flex; flex-wrap: wrap; gap: 16px; padding: 2px 0 10px; }
+.cc-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dsw-alias-label-secondary); cursor: pointer; }
+.cc-verdictBanner {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  padding: 12px 14px; border-radius: 10px; border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-base);
+}
+.cc-verdictBanner strong { font-size: 20px; letter-spacing: 0.04em; }
+.cc-verdictBanner span { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 1.5; }
+.cc-verdictBanner.pass { border-color: color-mix(in oklab, var(--dsw-alias-state-success-primary) 45%, transparent); background: color-mix(in oklab, var(--dsw-alias-state-success-primary) 7%, var(--dsw-alias-bg-base)); }
+.cc-verdictBanner.pass strong { color: var(--dsw-alias-state-success-primary); }
+.cc-verdictBanner.fail { border-color: color-mix(in oklab, var(--dsw-alias-state-error-primary) 45%, transparent); background: color-mix(in oklab, var(--dsw-alias-state-error-primary) 7%, var(--dsw-alias-bg-base)); }
+.cc-verdictBanner.fail strong { color: var(--dsw-alias-state-error-primary); }
+.cc-verdictBanner.uncertain { border-color: color-mix(in oklab, var(--dsw-alias-state-warn-primary) 45%, transparent); background: color-mix(in oklab, var(--dsw-alias-state-warn-primary) 7%, var(--dsw-alias-bg-base)); }
+.cc-verdictBanner.uncertain strong { color: var(--dsw-alias-state-warn-primary); }
+.cc-accCheck.pass { border-inline-start: 3px solid var(--dsw-alias-state-success-primary); }
+.cc-accCheck.fail { border-inline-start: 3px solid var(--dsw-alias-state-error-primary); }
+.cc-accCheck.uncertain { border-inline-start: 3px solid var(--dsw-alias-state-warn-primary); }
 .cc-accDetails {
   border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px;
   background: var(--dsw-alias-bg-layer-1); padding: 0 12px 12px;
