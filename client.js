@@ -546,6 +546,9 @@ window.__ModuleLoader__.load({
       const [acceptanceList, setAcceptanceList] = useState([])
       const [acceptanceError, setAcceptanceError] = useState('')
       const [acceptanceBusy, setAcceptanceBusy] = useState(false)
+      const [acceptanceHidden, setAcceptanceHidden] = useState(() =>
+        Boolean(restored && restored.acceptanceHidden),
+      )
       const [reviewPath, setReviewPath] = useState('')
       const [reviewBusy, setReviewBusy] = useState(false)
       const [reviewSession, setReviewSession] = useState('')
@@ -573,10 +576,11 @@ window.__ModuleLoader__.load({
               phase,
               dispatch,
               consumedJobId,
+              acceptanceHidden,
             }),
           )
         } catch {}
-      }, [form, job, brief, answer, refined, promptText, desktopPrompt, desktopReply, phase, dispatch, consumedJobId])
+      }, [form, job, brief, answer, refined, promptText, desktopPrompt, desktopReply, phase, dispatch, consumedJobId, acceptanceHidden])
 
       /* Environment and history: read once, then refresh while active. */
       useEffect(() => {
@@ -717,6 +721,7 @@ window.__ModuleLoader__.load({
         }
         try {
           await skipAcceptance(sessionId)
+          setAcceptanceHidden(true)
           setAcceptance((current) =>
             current && current.sessionId === sessionId
               ? { ...current, state: { ...(current.state || {}), state: 'skipped', phase: tt('acceptanceSkipped') } }
@@ -1045,6 +1050,7 @@ window.__ModuleLoader__.load({
         setPhase('setup')
         setNotice(null)
         setConsumedJobId(null)
+        setAcceptanceHidden(false)
       }
 
       /* ---------------------------------------------------------------- */
@@ -1777,7 +1783,7 @@ window.__ModuleLoader__.load({
         notice ? h(Notice, { notice, tt }) : null,
         h('div', { className: 'cc-grid' }, leftCard, rightCard),
         refinedCard,
-        acceptanceSection,
+        acceptanceHidden ? null : acceptanceSection,
         h(
           'div',
           { className: 'cc-history' },
