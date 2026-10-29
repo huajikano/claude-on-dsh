@@ -78,6 +78,7 @@ window.__ModuleLoader__.load({
         reviewOpen: '打开终端让 Claude 验收',
         reviewOpened: '已打开 Claude 验收终端',
         reviewPath: '报告将写入',
+        acceptanceSection: 'Claude 验收（可选，展开查看）',
         acceptanceNoSession: '还没有可验收的会话。',
         acceptanceArmed: '已就绪，等待任务 turn 结束',
         acceptanceAsk: '等待你在会话中选择「验收」',
@@ -201,6 +202,7 @@ window.__ModuleLoader__.load({
         reviewOpen: 'Open terminal and let Claude review',
         reviewOpened: 'Claude review terminal opened',
         reviewPath: 'Report will be written to',
+        acceptanceSection: 'Claude acceptance (optional; expand)',
         acceptanceNoSession: 'No dispatch to assess yet.',
         acceptanceArmed: 'Armed; waiting for the task turn to finish',
         acceptanceAsk: 'Waiting for your choice in the session',
@@ -1672,6 +1674,14 @@ window.__ModuleLoader__.load({
           : null,
       )
 
+      const acceptanceSection = h(
+        'details',
+        { className: 'cc-accDetails' },
+        h('summary', null, tt('acceptanceSection')),
+        acceptanceCard,
+        reviewCard,
+      )
+
       return h(
         'div',
         { className: 'cc-panel', 'data-panel': panelId },
@@ -1721,8 +1731,7 @@ window.__ModuleLoader__.load({
         notice ? h(Notice, { notice, tt }) : null,
         h('div', { className: 'cc-grid' }, leftCard, rightCard),
         refinedCard,
-        reviewCard,
-        acceptanceCard,
+        acceptanceSection,
         h(
           'div',
           { className: 'cc-history' },
@@ -2028,6 +2037,18 @@ window.__ModuleLoader__.load({
 .cc-code { font-size: 11px; color: var(--dsw-alias-label-secondary); word-break: break-all; }
 .cc-refinedHead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .cc-acceptance { gap: 10px; }
+.cc-accDetails {
+  border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-1); padding: 0 12px 12px;
+}
+.cc-accDetails > summary {
+  cursor: pointer; padding: 10px 0; font-size: 12.5px; font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+}
+.cc-accDetails[open] > summary {
+  border-bottom: 1px solid var(--dsw-alias-border-l1); margin-block-end: 12px;
+}
+.cc-accDetails .cc-card { border-color: var(--dsw-alias-border-l1); }
 .cc-review { border-inline-start: 3px solid #D97757; }
 .cc-accHead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cc-verdict {
