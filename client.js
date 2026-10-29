@@ -68,6 +68,7 @@ window.__ModuleLoader__.load({
         acceptanceHint: '派发任务结束后自动触发；这里显示 Claude 的验收进度、结论与证据。',
         acceptanceState: '状态',
         acceptanceRun: '立即验收',
+        acceptanceSkip: '跳过验收',
         acceptanceRefresh: '刷新',
         acceptanceNoSession: '还没有可验收的会话。',
         acceptanceArmed: '已就绪，等待任务 turn 结束',
@@ -182,6 +183,7 @@ window.__ModuleLoader__.load({
         acceptanceHint: 'Runs after the dispatched task turn; progress, verdict, and evidence appear here.',
         acceptanceState: 'State',
         acceptanceRun: 'Run acceptance',
+        acceptanceSkip: 'Skip acceptance',
         acceptanceRefresh: 'Refresh',
         acceptanceNoSession: 'No dispatch to assess yet.',
         acceptanceArmed: 'Armed; waiting for the task turn to finish',
@@ -469,6 +471,7 @@ window.__ModuleLoader__.load({
         acceptanceStatus,
         acceptanceList: fetchAcceptanceList,
         runAcceptance,
+        skipAcceptance,
       } = props
       const tt = useCallback(
         (key, vars) => {
@@ -647,8 +650,7 @@ window.__ModuleLoader__.load({
         } catch {}
       }
 
-      async function runAcceptanceNow() {
-        const sessionId =
+      async function runAcceptanceNow() {        const sessionId =
           (acceptance && acceptance.sessionId) ||
           (history.find((entry) => entry.sessionId) || {}).sessionId
         if (!sessionId) {
@@ -668,6 +670,26 @@ window.__ModuleLoader__.load({
           setAcceptanceError(error.message)
         } finally {
           setTimeout(() => setAcceptanceBusy(false), 1500)
+        }
+      }
+
+      async function skipAcceptanceNow() {
+        const sessionId =
+          (acceptance && acceptance.sessionId) ||
+          (history.find((entry) => entry.sessionId) || {}).sessionId
+        if (!sessionId) {
+          fail(tt('acceptanceNoSession'))
+          return
+        }
+        try {
+          await skipAcceptance(sessionId)
+          setAcceptance((current) =>
+            current && current.sessionId === sessionId
+              ? { ...current, state: { ...(current.state || {}), state: 'skipped', phase: tt('acceptanceSkipped') } }
+              : current,
+          )
+        } catch (error) {
+          setAcceptanceError(error.message)
         }
       }
 
@@ -1502,6 +1524,15 @@ window.__ModuleLoader__.load({
             Button,
             {
               variant: 'ghost',
+              disabled: acceptanceBusy || Boolean(acceptanceState && acceptanceState.state === 'running'),
+              onClick: skipAcceptanceNow,
+            },
+            tt('acceptanceSkip'),
+          ),
+          h(
+            Button,
+            {
+              variant: 'ghost',
               onClick: () => {
                 loadAcceptanceList()
                 if (acceptance && acceptance.sessionId) loadAcceptance(acceptance.sessionId)
@@ -1663,6 +1694,11 @@ window.__ModuleLoader__.load({
         acceptanceList: () => request('/acceptance/list'),
         runAcceptance: (sessionId) =>
           request('/acceptance/run', {
+            method: 'POST',
+            body: JSON.stringify({ sessionId }),
+          }),
+        skipAcceptance: (sessionId) =>
+          request('/acceptance/skip', {
             method: 'POST',
             body: JSON.stringify({ sessionId }),
           }),

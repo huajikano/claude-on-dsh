@@ -5,6 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { runCheckers } from '../../lib/acceptance/checkers.js'
 import { judgeAcceptance, validateJudgeOutput } from '../../lib/acceptance/judge.js'
+import { evidenceBackedOverall } from '../../lib/acceptance/kernel.js'
 import { renderMarkdown, writeReports } from '../../lib/acceptance/report.js'
 import { sampleFacts, sampleReport, workspace } from './fixtures.js'
 
@@ -83,6 +84,13 @@ test('judge maps its own timeout to status timeout', async () => {
     options: { judgeRetries: 0 },
   })
   assert.equal(result.status, 'timeout')
+})
+
+test('a pass is downgraded when facts are missing or a check is uncertain', () => {
+  assert.equal(evidenceBackedOverall('pass', [{ conclusion: 'pass' }], []), 'pass')
+  assert.equal(evidenceBackedOverall('pass', [{ conclusion: 'pass' }], ['git-state-unavailable']), 'uncertain')
+  assert.equal(evidenceBackedOverall('pass', [{ conclusion: 'uncertain' }], []), 'uncertain')
+  assert.equal(evidenceBackedOverall('fail', [{ conclusion: 'fail' }], ['x']), 'fail')
 })
 
 test('markdown exposes verdict and locatable evidence', () => {

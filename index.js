@@ -1324,6 +1324,17 @@ export function apply(ctx, config = {}) {
         return json({ started: true, sessionId })
       }),
     },
+    {
+      path: '/acceptance/skip',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        const sessionId = text(body.sessionId).trim()
+        if (!sessionId) throw userError('缺少会话 id')
+        acceptance.skip(sessionId)
+        return json({ skipped: true, sessionId })
+      }),
+    },
   ]
 
   for (const route of routes) {

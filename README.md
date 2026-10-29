@@ -85,10 +85,12 @@
 [acceptance-sample.json](docs/acceptance-sample.json)。
 
 插件主页的「Claude 验收」卡片会显示：验收状态（已就绪 / 等待选择 / Claude 验收中 / 完成 / 跳过 / 失败）、总结论、
-三项检查及说明、可展开的逐条证据、缺失判据、返工建议、报告路径，并可「立即验收」或切换「最近验收」。
+三项检查及说明、可展开的逐条证据、缺失判据、返工建议、报告路径，并提供「立即验收 / 跳过验收 / 刷新」与「最近验收」列表。
+验收完成后还会把结论与报告路径注入会话，DSH 在下一轮就能看到。
 
 每条 `pass`/`fail` 检查项必须绑定至少一条可定位证据（`path` + 行号区间或 `locator` + 原文片段）；
-证据为空只能是 `uncertain`，校验器会拒绝「pass/fail 但证据为空」的报告。报告状态为
+证据为空只能是 `uncertain`，校验器会拒绝「pass/fail 但证据为空」的报告。只要存在缺失判据或任一 `uncertain`
+检查项，总结论会被强制降级为 **uncertain**，不会因为三项机器检查通过就判 pass。报告状态为
 `completed` / `timeout` / `error`，判定器状态为 `completed` / `degraded` / `timeout` / `error` / `skipped`。
 
 ### 手动入口

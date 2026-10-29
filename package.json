@@ -1,6 +1,6 @@
 {
   "name": "claude-on-dsh",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Claude on DSH: the local Claude Code CLI (or Claude Desktop) runs a new project's opening question and plan, then DSH executes the handoff; evidence-based acceptance gate and an in-panel acceptance view.",
   "type": "module",
