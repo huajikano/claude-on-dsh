@@ -80,7 +80,8 @@ window.__ModuleLoader__.load({
         reviewPath: '报告将写入',
         acceptanceSection: 'Claude 验收（可选，展开查看）',
         dshAccept: '交给 DSH 验收',
-        dshAcceptOpened: '已创建 DSH 验收会话',
+        dshAcceptOpened: '已把验收任务发回原 DSH 会话',
+        reviewPickSession: '请先选择验收对象（该项目的首问会话）',
         acceptanceNoSession: '还没有可验收的会话。',
         acceptanceArmed: '已就绪，等待任务 turn 结束',
         acceptanceAsk: '等待你在会话中选择「验收」',
@@ -206,7 +207,8 @@ window.__ModuleLoader__.load({
         reviewPath: 'Report will be written to',
         acceptanceSection: 'Claude acceptance (optional; expand)',
         dshAccept: 'Hand off to DSH for acceptance',
-        dshAcceptOpened: 'DSH acceptance session created',
+        dshAcceptOpened: 'Acceptance task sent back to the original DSH session',
+        reviewPickSession: 'Choose the original first-question session first',
         acceptanceNoSession: 'No dispatch to assess yet.',
         acceptanceArmed: 'Armed; waiting for the task turn to finish',
         acceptanceAsk: 'Waiting for your choice in the session',
@@ -730,11 +732,22 @@ window.__ModuleLoader__.load({
           fail(tt('requiredDir'))
           return
         }
+        let targetSession = reviewSession
+        if (!targetSession) {
+          const entry = history.find(
+            (item) => item.projectDir === form.projectDir && item.sessionId,
+          )
+          if (!entry) {
+            fail(tt('reviewPickSession'))
+            return
+          }
+          targetSession = entry.sessionId
+        }
         setReviewBusy(true)
         try {
           const data = await dispatchAcceptance({
             projectDir: form.projectDir,
-            sessionId: reviewSession,
+            sessionId: targetSession,
           })
           setToast(tt('dshAcceptOpened'))
           try {

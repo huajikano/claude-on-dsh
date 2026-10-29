@@ -1466,7 +1466,19 @@ export function apply(ctx, config = {}) {
         const dir = expand(body.projectDir)
         if (!dir) throw userError('缺少项目目录', '交给 DSH 验收需要一个项目目录。', 400)
         if (!isDir(dir)) throw userError(`项目目录不存在：${dir}`, '请先创建或选择目录。', 400)
-        const sessionId = text(body.sessionId).trim()
+        let sessionId = text(body.sessionId).trim()
+        if (!sessionId) {
+          const history = await readHistory()
+          const entry = history.find((item) => item.projectDir === dir && item.sessionId)
+          if (!entry) {
+            throw userError(
+              '找不到该项目首问创建的 DSH 会话',
+              '请在「验收对象」里选择该项目的派发记录；验收必须回到原会话。',
+              400,
+            )
+          }
+          sessionId = entry.sessionId
+        }
         let goal = text(body.goal).trim()
         if (sessionId) {
           const payload = await acceptancePayload(sessionId)
@@ -1531,17 +1543,30 @@ export function apply(ctx, config = {}) {
             `4. 把验收报告写入 ${reportPath}，并在会话中给出结论与关键证据。`,
           ].join('\n')
         }
-        const workspace = await ctx.workspaceRegistry.create(dir, title || `验收：${titleBase}`)
-        const created = await ctx.sessionController.create({ workspaceId: workspace.id })
-        const live = ctx.sessions.get(created.sessionId)
+        // Acceptance belongs to the ORIGINAL DSH conversation created by the
+        // Claude first question: send the brief back there, never to a new
+        // session or workspace.
+        let live = ctx.sessions.get(sessionId)
+        let resolvedAgent
+        if (!live) {
+          try {
+            const resolved = await ctx.sessionController.resolveAgent(sessionId)
+            if (resolved && resolved.agent) resolvedAgent = resolved.agent
+            live = ctx.sessions.get(sessionId)
+          } catch {}
+        }
         if (live) {
           try {
             ctx.permissionPresets.set(live, 'danger-full-access')
           } catch {}
+        } else if (resolvedAgent) {
+          try {
+            ctx.approval.setPolicy(resolvedAgent, 'never')
+          } catch {}
         }
         await ctx.sessionController.prompt(
           {
-            sessionId: created.sessionId,
+            sessionId,
             requestId: randomUUID(),
             mode: 'queue',
             content: [{ type: 'text', text: brief }],
@@ -1550,12 +1575,12 @@ export function apply(ctx, config = {}) {
           AbortSignal.timeout(60_000),
         )
         return json({
-          sessionId: created.sessionId,
-          workspaceId: workspace.id,
-          workspaceTitle: workspace.title,
+          sessionId,
+          workspaceTitle: path.basename(dir),
           title,
           brief,
           reportPath,
+          reused: true,
         })
       }),
     },
