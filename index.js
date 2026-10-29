@@ -17,6 +17,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
+import { attachAcceptance } from './lib/acceptance/host.js'
 
 /** Loader row name. */
 export const name = 'claude-on-dsh'
@@ -29,6 +30,8 @@ export const inject = [
   'sessions',
   'permissionPresets',
   'approval',
+  'agents',
+  'userQuestions',
 ]
 
 const ROUTE = '/api/claude-on-dsh'
@@ -742,6 +745,39 @@ export function apply(ctx, config = {}) {
     return { url: claudeSettings.baseUrl, host: '', port: 0, reachable: false, local: true }
   }
 
+  // Acceptance Gate: the hook only observes armed sessions and never throws
+  // into the Session lifecycle. The judge reuses the same unattended CLI run
+  // in read-only plan mode, so acceptance can never modify the project.
+  const acceptance = attachAcceptance({
+    ctx,
+    config,
+    runJudge: async ({ prompt, schema, systemPrompt, cwd, timeoutMs }) => {
+      const executable = findCli(settings.claudeCliPath)
+      if (!executable) {
+        throw userError('没有找到 Claude Code CLI，无法进行验收判定', '请先确认 CLI 可用。', 500)
+      }
+      const run = startClaudeRun({
+        executable,
+        prompt,
+        cwd,
+        schema,
+        systemPrompt,
+        permissionMode: 'plan',
+        model: settings.model,
+        timeoutMs,
+        proxy: proxyInfo(),
+      })
+      return run.promise
+    },
+    logger: (line) => {
+      try {
+        ctx.logger?.info?.(line)
+      } catch {
+        console.log(line)
+      }
+    },
+  })
+
   async function cliInfo() {
     const path = findCli(settings.claudeCliPath)
     if (path !== cliCache.path || Date.now() - cliCache.checkedAt > CLI_PROBE_TTL_MS) {
@@ -950,17 +986,24 @@ export function apply(ctx, config = {}) {
     }
 
     const requestId = randomUUID()
+    // Arm before admission so the hook cannot miss the running -> idle edge.
+    acceptance.arm(created.sessionId, { workspace: projectDir, title: workspace.title, source: 'dispatch' })
     // prompt's second argument is the required admission AbortSignal.
-    await ctx.sessionController.prompt(
-      {
-        sessionId: created.sessionId,
-        requestId,
-        mode: 'queue',
-        content: [{ type: 'text', text: brief }],
-        clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      },
-      AbortSignal.timeout(60_000),
-    )
+    try {
+      await ctx.sessionController.prompt(
+        {
+          sessionId: created.sessionId,
+          requestId,
+          mode: 'queue',
+          content: [{ type: 'text', text: brief }],
+          clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        },
+        AbortSignal.timeout(60_000),
+      )
+    } catch (error) {
+      acceptance.disarm(created.sessionId)
+      throw error
+    }
 
     const record = {
       id: randomUUID(),

@@ -1,8 +1,8 @@
 {
   "name": "claude-on-dsh",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
-  "description": "Claude on DSH: the local Claude Code CLI (or Claude Desktop) runs a new project's opening question and plan, then DSH executes the whole handoff.",
+  "description": "Claude on DSH: the local Claude Code CLI (or Claude Desktop) runs a new project's opening question and plan, then DSH executes the handoff; 1.0.1 adds an evidence-based acceptance gate after the session runs.",
   "type": "module",
   "repository": {
     "type": "git",
@@ -18,13 +18,23 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
+  "bin": {
+    "claude-on-dsh-acceptance": "./bin/acceptance.mjs"
+  },
   "files": [
     "index.js",
     "client.js",
     "cordis.patch.yml",
     "locale/*.json",
-    "icon.svg"
+    "icon.svg",
+    "lib",
+    "bin",
+    "docs",
+    "README.md"
   ],
+  "scripts": {
+    "test": "node --test \"test/acceptance/*.test.js\""
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

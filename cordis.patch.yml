@@ -13,6 +13,8 @@
 #   permissionPreset danger-full-access (full access) or another configured preset
 #   model           optional model override passed to the Claude Code CLI
 #   timeoutMs       per-call timeout for the CLI (default 240000)
+#   acceptance      gatePolicy: off|ask|auto (default ask), timeoutMs,
+#                   askTimeoutMs, judgeRetries, reportDir, allowedPaths
 
 - insert:
     - id: claude-on-dsh
@@ -20,3 +22,10 @@
       config:
         permissionMode: plan
         timeoutMs: 240000
+        acceptance:
+          gatePolicy: ask
+          timeoutMs: 180000
+          askTimeoutMs: 120000
+          judgeRetries: 2
+          reportDir: .dsh/acceptance
+          allowedPaths: []

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/huajikano/claude-on-dsh/acceptance-report.schema.json",
+  "title": "AcceptanceReport",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "sessionId",
+    "workspace",
+    "generatedAt",
+    "status",
+    "gatePolicy",
+    "task",
+    "checks",
+    "overall",
+    "rework",
+    "missing",
+    "meta"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "workspace": { "type": "string", "minLength": 1 },
+    "generatedAt": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["completed", "timeout", "error"] },
+    "gatePolicy": { "enum": ["off", "ask", "auto", "manual"] },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "sourceSeq"],
+      "properties": {
+        "summary": { "type": "string" },
+        "sourceSeq": { "type": ["integer", "null"] }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "conclusion", "evidence", "note"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "conclusion": { "enum": ["pass", "fail", "uncertain"] },
+          "evidence": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/evidence" }
+          },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "overall": { "enum": ["pass", "fail", "uncertain"] },
+    "rework": { "type": "array", "items": { "type": "string" } },
+    "missing": { "type": "array", "items": { "type": "string" } },
+    "meta": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["durationMs", "judge"],
+      "properties": {
+        "durationMs": { "type": "number" },
+        "evidenceCount": { "type": "integer" },
+        "judge": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["status"],
+          "properties": {
+            "status": { "enum": ["completed", "degraded", "timeout", "error", "skipped"] },
+            "attempts": { "type": "integer" },
+            "model": { "type": "string" },
+            "durationMs": { "type": "number" },
+            "error": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "locator", "excerpt"],
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "enum": ["file", "command", "test", "event"] },
+        "path": { "type": "string" },
+        "command": { "type": "string" },
+        "lines": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "locator": { "type": "string" },
+        "excerpt": { "type": "string" }
+      }
+    }
+  }
+}

@@ -58,10 +58,71 @@
 - `bypassPermissions` 仅在你自己显式配置时生效，面板不提供该选项。
 - 插件不读取、不写入任何 API key；认证由 Claude Code / CC Switch 的原生配置负责。
 
+## 自动验收（Acceptance Gate，1.0.1+）
+
+派发的会话结束后，插件会自动按会话原始事实生成验收报告，而不是采信 DSH 的自我汇报。
+
+### 触发
+
+- 插件在 dispatch 时 `arm` 会话；
+- 监听 `agent/status` 的 `running → idle`（延迟 150ms 落盘）触发一次；
+- 若会话在 idle 前被 dispose，用 `agent/disposed` 兜底；
+- DSH 没有 `session/ended` 事件，探测结论见 [acceptance-probe.md](docs/acceptance-probe.md)。
+
+### 策略
+
+| `gatePolicy` | 行为 |
+|---|---|
+| `off` | 不调用 Claude，不落盘 |
+| `ask`（默认） | 在会话内向用户询问「验收 / 跳过」；拒绝或超时无报告，不影响会话结束 |
+| `auto` | 直接验收 |
+
+### 报告
+
+写入 `<workspace>/.dsh/acceptance/<sessionId>.json` 与同名的 `.md`。JSON 契约见
+[report-schema.json](lib/acceptance/report-schema.json)，
+真实样本见 [acceptance-sample.md](docs/acceptance-sample.md) 与
+[acceptance-sample.json](docs/acceptance-sample.json)。
+
+每条 `pass`/`fail` 检查项必须绑定至少一条可定位证据（`path` + 行号区间或 `locator` + 原文片段）；
+证据为空只能是 `uncertain`，校验器会拒绝「pass/fail 但证据为空」的报告。报告状态为
+`completed` / `timeout` / `error`，判定器状态为 `completed` / `degraded` / `timeout` / `error` / `skipped`。
+
+### 手动入口
+
+- DSH 会话内：`/acceptance run <sessionId>`
+- 终端：`node bin/acceptance.mjs run <sessionId> [--no-judge] [--allow <glob>] [--dir <dir>]`
+
+两个入口与自动钩子共用 `lib/acceptance/kernel.js`，检查器与判定器完全一致。
+
+### 配置
+
+```yaml
+- id: claude-on-dsh
+  config:
+    acceptance:
+      gatePolicy: ask          # off | ask | auto
+      timeoutMs: 180000        # 单次验收总预算
+      askTimeoutMs: 120000     # ask 等待用户回答的上限
+      judgeTimeoutMs: 180000   # Claude 判定上限
+      judgeRetries: 2          # schema 校验失败重试次数
+      reportDir: .dsh/acceptance
+      allowedPaths: []         # 空 = 工作区内全部允许；写 workspace 外交付物时加白名单
+```
+
+### 临时关闭与排障
+
+- 关闭：`acceptance.gatePolicy: off`。
+- 没有报告：off / ask 被拒绝 / 会话 header 没有 `cwd` / 没有观察到 running→idle。
+- `judge=degraded`：Claude CLI 或模型不可用；报告整体降级为 `uncertain`，不伪造 pass。
+- `scope: fail`：改动落在工作区外；把交付目录加入 `allowedPaths`，或把交付物迁入工作区。
+- 报告目录建议加入项目 `.gitignore`：`.dsh/acceptance/`。
+
 ## 开发与验证
 
 - Host 半：Node ESM，无第三方依赖；`/api/claude-on-dsh/*` 路由负责探测、运行 CLI、派发、历史与桌面启动。
 - Client 半：`window.__ModuleLoader__` 工厂，注册 `sidebar.panellist` 图标与 `main` 面板。
+- 验收内核：`lib/acceptance/`，`npm test` 运行 25 个 node:test 用例（契约、取证、检查器、判定、报告、三态策略、dispatch 回归）。
 - 已实测：Claude CLI 探测（2.1.295）、真实首问与定稿两次结构化调用、Host 路由离线 harness、DSH 侧栏与主面板注册。
 - 未实测：浏览器内的面板视觉渲染与「点击派发」全链路（开发会话没有浏览器控制能力）；首次使用请刷新一次页面。
 
