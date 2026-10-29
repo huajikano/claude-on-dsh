@@ -1421,8 +1421,7 @@ export function apply(ctx, config = {}) {
     },
     {
       path: '/acceptance/terminal',
-      methods: ['POST'],
-      handler: endpoint(async (request) => {
+      methods: ['POST'],      handler: endpoint(async (request) => {
         const body = await readBody(request)
         const dir = expand(body.projectDir)
         if (!dir) throw userError('缺少项目目录', '直接验收需要一个项目目录。', 400)
@@ -1457,6 +1456,107 @@ export function apply(ctx, config = {}) {
           focus: text(body.focus).trim(),
         })
         return json({ launched: Boolean(result.pid), sessionId, ...result })
+      }),
+    },
+    {
+      path: '/acceptance/dispatch',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        const dir = expand(body.projectDir)
+        if (!dir) throw userError('缺少项目目录', '交给 DSH 验收需要一个项目目录。', 400)
+        if (!isDir(dir)) throw userError(`项目目录不存在：${dir}`, '请先创建或选择目录。', 400)
+        const sessionId = text(body.sessionId).trim()
+        let goal = text(body.goal).trim()
+        if (sessionId) {
+          const payload = await acceptancePayload(sessionId)
+          if (payload.report && payload.report.task && payload.report.task.summary) {
+            goal = payload.report.task.summary
+          } else {
+            try {
+              const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(20_000))
+              const task = extractTask(inspected.events)
+              if (task.summary) goal = task.summary
+            } catch {}
+          }
+        }
+        const titleBase = path.basename(dir)
+        const reportPath = path.join(dir, '.dsh', 'acceptance', 'dsh-验收.md')
+        const executable = findCli(settings.claudeCliPath)
+        const schema = {
+          type: 'object',
+          properties: { title: { type: 'string' }, brief: { type: 'string' } },
+          required: ['title', 'brief'],
+          additionalProperties: false,
+        }
+        const prompt = [
+          '你是验收指挥。请为下面的项目写一份交给 DSH 执行代理的验收任务书。',
+          `项目目录：${dir}`,
+          `任务背景：${goal || '未提供，请按项目现状验收'}`,
+          '要求 DSH：实际读取项目与 git 状态；运行可用的构建/测试/lint 并记录真实输出；',
+          '逐项给出 pass / fail / uncertain 与证据；无法验证的项标 uncertain，禁止猜 pass；',
+          `把报告写入 ${reportPath}，并在会话中给出结论。`,
+          'brief 必须自包含、可直接执行，不要依赖追问；输出 JSON { title, brief }。',
+        ].join('\n')
+        let brief = ''
+        let title = ''
+        if (executable) {
+          try {
+            const run = startClaudeRun({
+              executable,
+              prompt,
+              cwd: dir,
+              schema,
+              permissionMode: 'plan',
+              model: settings.model,
+              timeoutMs: 120_000,
+              proxy: proxyInfo(),
+            })
+            const result = await run.promise
+            brief = text(result.data.brief).trim()
+            title = text(result.data.title).trim()
+          } catch {}
+        }
+        if (!brief) {
+          title = `验收：${titleBase}`
+          brief = [
+            `请对项目做独立验收：${dir}`,
+            '',
+            `任务背景：${goal || '未提供，请按项目现状判断'}`,
+            '',
+            '要求：',
+            '1. 读取项目与 git 状态，列出实际改动文件；',
+            '2. 运行可用的构建/测试/lint，记录真实命令、输出与退出码；',
+            '3. 逐项给出 pass / fail / uncertain 与证据；无法验证的项标 uncertain，禁止猜 pass；',
+            `4. 把验收报告写入 ${reportPath}，并在会话中给出结论与关键证据。`,
+          ].join('\n')
+        }
+        const workspace = await ctx.workspaceRegistry.create(dir, title || `验收：${titleBase}`)
+        const created = await ctx.sessionController.create({ workspaceId: workspace.id })
+        const live = ctx.sessions.get(created.sessionId)
+        if (live) {
+          try {
+            ctx.permissionPresets.set(live, 'danger-full-access')
+          } catch {}
+        }
+        await ctx.sessionController.prompt(
+          {
+            sessionId: created.sessionId,
+            requestId: randomUUID(),
+            mode: 'queue',
+            content: [{ type: 'text', text: brief }],
+            clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          },
+          AbortSignal.timeout(60_000),
+        )
+        return json({
+          sessionId: created.sessionId,
+          workspaceId: workspace.id,
+          workspaceTitle: workspace.title,
+          title,
+          brief,
+          reportPath,
+        })
       }),
     },
   ]

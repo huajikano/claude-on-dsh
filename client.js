@@ -79,6 +79,8 @@ window.__ModuleLoader__.load({
         reviewOpened: '已打开 Claude 验收终端',
         reviewPath: '报告将写入',
         acceptanceSection: 'Claude 验收（可选，展开查看）',
+        dshAccept: '交给 DSH 验收',
+        dshAcceptOpened: '已创建 DSH 验收会话',
         acceptanceNoSession: '还没有可验收的会话。',
         acceptanceArmed: '已就绪，等待任务 turn 结束',
         acceptanceAsk: '等待你在会话中选择「验收」',
@@ -203,6 +205,8 @@ window.__ModuleLoader__.load({
         reviewOpened: 'Claude review terminal opened',
         reviewPath: 'Report will be written to',
         acceptanceSection: 'Claude acceptance (optional; expand)',
+        dshAccept: 'Hand off to DSH for acceptance',
+        dshAcceptOpened: 'DSH acceptance session created',
         acceptanceNoSession: 'No dispatch to assess yet.',
         acceptanceArmed: 'Armed; waiting for the task turn to finish',
         acceptanceAsk: 'Waiting for your choice in the session',
@@ -491,6 +495,7 @@ window.__ModuleLoader__.load({
         runAcceptance,
         skipAcceptance,
         reviewTerminal,
+        dispatchAcceptance,
       } = props
       const tt = useCallback(
         (key, vars) => {
@@ -717,6 +722,29 @@ window.__ModuleLoader__.load({
           )
         } catch (error) {
           setAcceptanceError(error.message)
+        }
+      }
+
+      async function dispatchAcceptanceNow() {
+        if (form.projectDir.trim().length === 0) {
+          fail(tt('requiredDir'))
+          return
+        }
+        setReviewBusy(true)
+        try {
+          const data = await dispatchAcceptance({
+            projectDir: form.projectDir,
+            sessionId: reviewSession,
+          })
+          setToast(tt('dshAcceptOpened'))
+          try {
+            await refreshSessions(data.sessionId)
+          } catch {}
+          openSession(data.sessionId)
+        } catch (error) {
+          fail(error.message, error.hint)
+        } finally {
+          setReviewBusy(false)
         }
       }
 
@@ -1665,7 +1693,12 @@ window.__ModuleLoader__.load({
           { className: 'cc-actions' },
           h(
             Button,
-            { variant: 'primary', busy: reviewBusy, disabled: reviewBusy, onClick: openReviewNow },
+            { variant: 'primary', busy: reviewBusy, disabled: reviewBusy, onClick: dispatchAcceptanceNow },
+            tt('dshAccept'),
+          ),
+          h(
+            Button,
+            { variant: 'ghost', disabled: reviewBusy, onClick: openReviewNow },
             tt('reviewOpen'),
           ),
         ),
@@ -1822,6 +1855,11 @@ window.__ModuleLoader__.load({
           }),
         reviewTerminal: (payload) =>
           request('/acceptance/terminal', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          }),
+        dispatchAcceptance: (payload) =>
+          request('/acceptance/dispatch', {
             method: 'POST',
             body: JSON.stringify(payload),
           }),
