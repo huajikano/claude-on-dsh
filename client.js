@@ -1029,6 +1029,23 @@ window.__ModuleLoader__.load({
         }
       }
 
+      async function acceptSession(entry) {
+        if (!entry || !entry.sessionId) return
+        try {
+          const data = await dispatchAcceptance({
+            projectDir: entry.projectDir || form.projectDir,
+            sessionId: entry.sessionId,
+          })
+          setToast(tt('dshAcceptOpened'))
+          try {
+            await refreshSessions(data.sessionId)
+          } catch {}
+          openSession(data.sessionId)
+        } catch (error) {
+          fail(error.message, error.hint)
+        }
+      }
+
       async function openSessionNow(sessionId) {
         if (!sessionId) return
         try {
@@ -1279,6 +1296,15 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'cc-actions' },
             h(Button, { variant: 'primary', onClick: () => openSessionNow(dispatch.sessionId) }, tt('openSession')),
+            h(
+              Button,
+              {
+                variant: 'ghost',
+                onClick: () =>
+                  acceptSession({ sessionId: dispatch.sessionId, projectDir: form.projectDir }),
+              },
+              tt('dshAccept'),
+            ),
             h(Button, { variant: 'ghost', onClick: reset }, tt('newProject')),
             h(Button, { variant: 'ghost', onClick: archiveCurrent }, tt('archive')),
           ),
@@ -1810,22 +1836,6 @@ window.__ModuleLoader__.load({
             h(Chip, { on: desktopReady, label: tt('statusDesktop') }),
             h(Chip, { on: proxyReady, warn: detect ? !proxyReady : false, label: tt('statusProxy') }),
             h(Chip, { on: ccSwitchReady, label: tt('statusCcSwitch') }),
-            acceptanceHidden || !settings.manualAcceptance
-              ? h(
-                  Button,
-                  {
-                    variant: 'link',
-                    onClick: () => {
-                      setAcceptanceHidden(false)
-                      if (!settings.manualAcceptance) {
-                        setSettings((current) => ({ ...current, manualAcceptance: true }))
-                        saveSettings({ manualAcceptance: true })
-                      }
-                    },
-                  },
-                  tt('acceptanceShow'),
-                )
-              : null,
           ),
         ),
         h(
@@ -1850,7 +1860,6 @@ window.__ModuleLoader__.load({
         notice ? h(Notice, { notice, tt }) : null,
         h('div', { className: 'cc-grid' }, leftCard, rightCard),
         refinedCard,
-        acceptanceHidden || !settings.manualAcceptance ? null : acceptanceSection,
         h(
           'div',
           { className: 'cc-history' },
@@ -1878,6 +1887,16 @@ window.__ModuleLoader__.load({
                           tt('historyOpen'),
                         )
                       : h('span', { className: 'cc-historyMuted' }, tt('noHistorySession')),
+                    entry.sessionId
+                      ? h(
+                          Button,
+                          {
+                            variant: 'link',
+                            onClick: () => acceptSession(entry),
+                          },
+                          tt('dshAccept'),
+                        )
+                      : null,
                   ),
                 ),
               ),

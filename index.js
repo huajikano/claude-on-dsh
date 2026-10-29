@@ -755,38 +755,50 @@ export function apply(ctx, config = {}) {
     )
   } catch {}
 
-  // Acceptance Gate: the hook only observes armed sessions and never throws
-  // into the Session lifecycle. The judge reuses the same unattended CLI run
-  // in read-only plan mode, so acceptance can never modify the project.
-  const acceptance = attachAcceptance({
-    ctx,
-    config,
-    runJudge: async ({ prompt, schema, systemPrompt, cwd, timeoutMs }) => {
-      const executable = findCli(settings.claudeCliPath)
-      if (!executable) {
-        throw userError('没有找到 Claude Code CLI，无法进行验收判定', '请先确认 CLI 可用。', 500)
-      }
-      const run = startClaudeRun({
-        executable,
-        prompt,
-        cwd,
-        schema,
-        systemPrompt,
-        permissionMode: 'plan',
-        model: settings.model,
-        timeoutMs,
-        proxy: proxyInfo(),
+  // Lean mode: no automatic gate and no session writes. The only acceptance
+  // path is the explicit "验收" action that sends a brief back to the original
+  // DSH session. The legacy 1.0.1-style gate is opt-in via
+  // acceptance.legacyGate and never injects messages.
+  const legacyGate = config && config.acceptance && config.acceptance.legacyGate === true
+  const acceptance = legacyGate
+    ? attachAcceptance({
+        ctx,
+        config,
+        runJudge: async ({ prompt, schema, systemPrompt, cwd, timeoutMs }) => {
+          const executable = findCli(settings.claudeCliPath)
+          if (!executable) {
+            throw userError('没有找到 Claude Code CLI，无法进行验收判定', '请先确认 CLI 可用。', 500)
+          }
+          const run = startClaudeRun({
+            executable,
+            prompt,
+            cwd,
+            schema,
+            systemPrompt,
+            permissionMode: 'plan',
+            model: settings.model,
+            timeoutMs,
+            proxy: proxyInfo(),
+          })
+          return run.promise
+        },
+        logger: (line) => {
+          try {
+            ctx.logger?.info?.(line)
+          } catch {
+            console.log(line)
+          }
+        },
       })
-      return run.promise
-    },
-    logger: (line) => {
-      try {
-        ctx.logger?.info?.(line)
-      } catch {
-        console.log(line)
+    : {
+        arm() {},
+        disarm() {},
+        setAuto() {},
+        status() {
+          return undefined
+        },
+        gatePolicy: 'off',
       }
-    },
-  })
 
   acceptance.setAuto(acceptanceSettings.autoAcceptance)
 

@@ -23,6 +23,7 @@
         permissionMode: plan
         timeoutMs: 240000
         acceptance:
+          legacyGate: false
           gatePolicy: ask
           timeoutMs: 180000
           askTimeoutMs: 120000
