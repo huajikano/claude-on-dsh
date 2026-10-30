@@ -871,8 +871,8 @@ export function apply(ctx, config = {}) {
       workspace,
     })
     const context = [
-      `任务：${facts.task.summary || '未识别'}`,
-      `最近对话：\n${recentConversation(inspected.events) || '无'}`,
+      `任务摘要：${facts.task.summary ? facts.task.summary.slice(0, 800) : '未识别'}`,
+      `最近对话：\n${recentConversation(inspected.events, 6) || '无'}`,
       `改动文件：${facts.changedFiles.slice(0, 20).map((file) => file.path).join(', ') || '无'}`,
       `最近验证命令：${
         facts.commands
@@ -881,11 +881,12 @@ export function apply(ctx, config = {}) {
           .map((command) => `${command.command} -> ${command.isError ? '失败' : '成功'}`)
           .join('; ') || '无'
       }`,
-      `git：${JSON.stringify(facts.git).slice(0, 800)}`,
+      `git：${JSON.stringify(facts.git).slice(0, 500)}`,
     ].join('\n\n')
     const prompt = [
       '你在一个已经存在的 DSH 对话中接手。请先根据下面的上下文了解项目和之前的对话，',
       '再根据用户的新要求，生成一条「首问」消息，发回这个 DSH 对话。',
+      '不要复述旧任务书，也不要重复最近对话；首问必须针对新要求提出新的、最关键的确认点。',
       '',
       '上下文：',
       context,
@@ -893,8 +894,8 @@ export function apply(ctx, config = {}) {
       `用户新要求：${requirement}`,
       '',
       '输出 JSON：',
-      '- understanding：3-5 句，说明你了解到的项目与之前对话（给用户看）',
-      '- question：一个最关键、最需要先确认的问题',
+      '- understanding：2-3 句，说明你从最近对话里了解到的现状（给用户看，不要复述旧任务）',
+      '- question：一个最关键、最需要先确认的新问题',
       '- brief：发给 DSH 的完整消息，包含首问与必要背景，1-3 句，直接可回答/执行',
     ].join('\n')
     const schema = {
@@ -927,12 +928,19 @@ export function apply(ctx, config = {}) {
         understanding = text(result.data.understanding).trim()
         question = text(result.data.question).trim()
         brief = text(result.data.brief).trim()
-      } catch {}
+      } catch (error) {
+        try {
+          ctx.logger?.warn?.(`first-question Claude failed: ${error.message}`)
+        } catch {}
+      }
     }
     if (!question) {
-      understanding = `已读取会话与项目：${facts.task.summary || workspace}`
+      const recent = recentConversation(inspected.events, 2)
+      understanding = recent
+        ? `最近一轮对话：${recent.slice(-600)}`
+        : `项目目录：${workspace}`
       question = requirement
-      brief = `[Claude 首问]\n${requirement}\n\n背景：${understanding}`
+      brief = `[Claude 首问]\n${requirement}\n\n背景：${understanding.slice(0, 600)}`
     }
     if (!brief) brief = `[Claude 首问]\n${question}\n\n背景：${understanding}`
     let live = ctx.sessions.get(sessionId)

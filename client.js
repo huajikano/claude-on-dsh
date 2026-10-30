@@ -2390,10 +2390,16 @@ window.__ModuleLoader__.load({
         listSessions: () => request('/sessions'),
         currentSessionId: (() => {
           try {
-            return ctx.sessions.scopeOf?.(ctx) || ''
-          } catch {
-            return ''
-          }
+            const scoped = ctx.sessions.scopeOf?.(ctx)
+            if (scoped) return scoped
+          } catch {}
+          try {
+            const match =
+              window.location.hash.match(/session[\/-]([A-Za-z0-9-]+)/) ||
+              window.location.pathname.match(/session[\/-]([A-Za-z0-9-]+)/)
+            if (match) return match[1]
+          } catch {}
+          return ''
         })(),
         getSettings: () => request('/settings'),
         saveSettings: (patch) =>
@@ -2704,13 +2710,13 @@ window.__ModuleLoader__.load({
 .cc-historyMuted { font-size: 11px; color: var(--dsw-alias-label-secondary); opacity: 0.7; }
 .cc-modalBackdrop {
   position: fixed; inset: 0; z-index: 80; display: grid; place-items: center;
-  background: rgba(0, 0, 0, 0.42); padding: 24px;
+  background: transparent; padding: 24px;
 }
 .cc-modal {
   inline-size: min(560px, 100%); max-block-size: 86vh; overflow: auto;
   display: flex; flex-direction: column; gap: 12px; padding: 18px;
   border: 1px solid var(--dsw-alias-border-l2); border-radius: 14px;
-  background: var(--dsw-alias-bg-overlay); box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+  background: var(--dsw-alias-bg-overlay); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
 }
 .cc-quickActions { display: flex; justify-content: flex-end; margin-block: -2px 10px; }
 .cc-select {
