@@ -18,7 +18,7 @@
    固定版本（推荐）：
 
    ```text
-   github:huajikano/claude-on-dsh#v1.1.4
+   github:huajikano/claude-on-dsh#v1.1.5
    ```
 
    等价写法：
@@ -32,7 +32,7 @@
 
 要求：Windows；本机已安装 Claude Code CLI（或安装后在插件配置里填 `claudeCliPath`）；DSH 安装插件需要 Full access 或批准。仓库公开，无需 token。插件是纯 JavaScript bundle，没有构建步骤。
 
-> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 1.1.4。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
+> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 1.1.5。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
 
 ## 工作流
 
@@ -46,6 +46,17 @@
    - 在面板里给出「打开会话」入口。
 
 之后的所有实现工作都在 DSH 会话中进行。
+
+## 在已有对话中继续（首问）
+
+历史记录里每条会话都有「**首问**」按钮：
+
+1. 选择一个已经存在的 DSH 对话；
+2. 填写这次的新要求；
+3. Claude 读取该对话的历史、任务、改动文件和 git 状态；
+4. Claude 生成一条带上下文的首问，**直接发回这个已有对话**，不会新建会话。
+
+只有点「发送首问」才会消耗额度；Claude 无法调用时会退化为把你的新要求作为首问发回。
 
 ## 本机集成
 

@@ -19,7 +19,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { attachAcceptance } from './lib/acceptance/host.js'
 import { executeAcceptance } from './lib/acceptance/kernel.js'
-import { extractTask } from './lib/acceptance/facts.js'
+import { extractTask, buildFacts } from './lib/acceptance/facts.js'
 
 /** Loader row name. */
 export const name = 'claude-on-dsh'
@@ -840,6 +840,126 @@ export function apply(ctx, config = {}) {
 
   const ACCEPTANCE_ID = /^session-[A-Za-z0-9-]+$/
 
+  function recentConversation(events, limit = 8) {
+    const lines = []
+    for (const event of events) {
+      if (event.type !== 'user/message' && event.type !== 'assistant/message') continue
+      const data = event.data || {}
+      if (data.source && data.source.kind && data.source.kind !== 'user' && data.source.kind !== 'claude-on-dsh') {
+        continue
+      }
+      const parts = Array.isArray(data.content) ? data.content : []
+      const text = parts
+        .filter((part) => part && part.type === 'text')
+        .map((part) => part.text)
+        .join('\n')
+        .trim()
+      if (!text) continue
+      lines.push(`${event.type === 'user/message' ? '用户' : 'DSH'}：${text.slice(0, 700)}`)
+    }
+    return lines.slice(-limit).join('\n---\n')
+  }
+
+  async function runFirstQuestion(sessionId, requirement) {
+    const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(60_000))
+    const workspace = inspected.meta && inspected.meta.cwd
+    if (!workspace) throw userError('会话缺少 workspace，无法读取项目', '', 400)
+    const facts = buildFacts({
+      sessionId,
+      meta: inspected.meta,
+      events: inspected.events,
+      workspace,
+    })
+    const context = [
+      `任务：${facts.task.summary || '未识别'}`,
+      `最近对话：\n${recentConversation(inspected.events) || '无'}`,
+      `改动文件：${facts.changedFiles.slice(0, 20).map((file) => file.path).join(', ') || '无'}`,
+      `最近验证命令：${
+        facts.commands
+          .filter((command) => command.kind === 'verification')
+          .slice(-4)
+          .map((command) => `${command.command} -> ${command.isError ? '失败' : '成功'}`)
+          .join('; ') || '无'
+      }`,
+      `git：${JSON.stringify(facts.git).slice(0, 800)}`,
+    ].join('\n\n')
+    const prompt = [
+      '你在一个已经存在的 DSH 对话中接手。请先根据下面的上下文了解项目和之前的对话，',
+      '再根据用户的新要求，生成一条「首问」消息，发回这个 DSH 对话。',
+      '',
+      '上下文：',
+      context,
+      '',
+      `用户新要求：${requirement}`,
+      '',
+      '输出 JSON：',
+      '- understanding：3-5 句，说明你了解到的项目与之前对话（给用户看）',
+      '- question：一个最关键、最需要先确认的问题',
+      '- brief：发给 DSH 的完整消息，包含首问与必要背景，1-3 句，直接可回答/执行',
+    ].join('\n')
+    const schema = {
+      type: 'object',
+      properties: {
+        understanding: { type: 'string' },
+        question: { type: 'string' },
+        brief: { type: 'string' },
+      },
+      required: ['understanding', 'question', 'brief'],
+      additionalProperties: false,
+    }
+    let understanding = ''
+    let question = ''
+    let brief = ''
+    const executable = findCli(settings.claudeCliPath)
+    if (executable) {
+      try {
+        const run = startClaudeRun({
+          executable,
+          prompt,
+          cwd: workspace,
+          schema,
+          permissionMode: 'plan',
+          model: settings.model,
+          timeoutMs: 120_000,
+          proxy: proxyInfo(),
+        })
+        const result = await run.promise
+        understanding = text(result.data.understanding).trim()
+        question = text(result.data.question).trim()
+        brief = text(result.data.brief).trim()
+      } catch {}
+    }
+    if (!question) {
+      understanding = `已读取会话与项目：${facts.task.summary || workspace}`
+      question = requirement
+      brief = `[Claude 首问]\n${requirement}\n\n背景：${understanding}`
+    }
+    if (!brief) brief = `[Claude 首问]\n${question}\n\n背景：${understanding}`
+    let live = ctx.sessions.get(sessionId)
+    if (!live) {
+      try {
+        await ctx.sessionController.resolveAgent(sessionId)
+        live = ctx.sessions.get(sessionId)
+      } catch {}
+    }
+    if (live) {
+      try {
+        ctx.permissionPresets.set(live, 'danger-full-access')
+      } catch {}
+    }
+    await ctx.sessionController.prompt(
+      {
+        sessionId,
+        requestId: randomUUID(),
+        mode: 'queue',
+        content: [{ type: 'text', text: brief }],
+        clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      },
+      AbortSignal.timeout(60_000),
+    )
+    return json({ sessionId, understanding, question, brief, sent: true })
+  }
+
   async function readAcceptanceFiles(workspace, sessionId) {
     if (!workspace || !ACCEPTANCE_ID.test(sessionId)) return { report: null, markdown: '', dir: '' }
     const dir = path.join(workspace, '.dsh', 'acceptance')
@@ -1658,6 +1778,18 @@ export function apply(ctx, config = {}) {
           paths: result.paths,
           writeError: result.writeError,
         })
+      }),
+    },
+    {
+      path: '/session/first-question',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        const sessionId = text(body.sessionId).trim()
+        const requirement = text(body.requirement).trim()
+        if (!sessionId) throw userError('请选择已有 DSH 对话')
+        if (!requirement) throw userError('请填写新要求')
+        return runFirstQuestion(sessionId, requirement)
       }),
     },
     {

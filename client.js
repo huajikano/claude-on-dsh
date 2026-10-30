@@ -91,6 +91,13 @@ window.__ModuleLoader__.load({
         acceptanceStart: '开始验收',
         acceptanceCancel: '取消',
         acceptanceDone: '验收完成',
+        firstQuestion: '首问',
+        firstQuestionHint: 'Claude 会读取该对话与项目，然后把首问发回这个对话；点「发送首问」才会消耗额度。',
+        firstQuestionRequirement: '新要求',
+        firstQuestionPlaceholder: '例如：在现有流程上增加并行分支，保持旧数据不丢。',
+        firstQuestionSend: '发送首问',
+        firstQuestionRequired: '请填写新要求',
+        firstQuestionDone: '首问已发回该对话',
         dshAcceptOpened: '已把验收任务发回原 DSH 会话',
         reviewPickSession: '请先选择验收对象（该项目的首问会话）',
         acceptanceNoSession: '还没有可验收的会话。',
@@ -229,6 +236,13 @@ window.__ModuleLoader__.load({
         acceptanceStart: 'Start acceptance',
         acceptanceCancel: 'Cancel',
         acceptanceDone: 'Acceptance complete',
+        firstQuestion: 'First question',
+        firstQuestionHint: 'Claude reads this conversation and project, then posts its first question back here. Credits are spent only when you send.',
+        firstQuestionRequirement: 'New requirement',
+        firstQuestionPlaceholder: 'e.g. add parallel branches to the existing flow without losing old data.',
+        firstQuestionSend: 'Send first question',
+        firstQuestionRequired: 'Enter a requirement',
+        firstQuestionDone: 'First question sent to the conversation',
         dshAcceptOpened: 'Acceptance task sent back to the original DSH session',
         reviewPickSession: 'Choose the original first-question session first',
         acceptanceNoSession: 'No dispatch to assess yet.',
@@ -521,6 +535,7 @@ window.__ModuleLoader__.load({
         reviewTerminal,
         dispatchAcceptance,
         runClaudeAcceptance,
+        askFirstQuestion,
         getSettings,
         saveSettings,
       } = props
@@ -577,6 +592,7 @@ window.__ModuleLoader__.load({
       const [reviewBusy, setReviewBusy] = useState(false)
       const [reviewSession, setReviewSession] = useState('')
       const [dialog, setDialog] = useState(null)
+      const [firstQuestion, setFirstQuestion] = useState(null)
 
       const update = useCallback((patch) => {
         setForm((current) => ({ ...current, ...patch }))
@@ -1044,6 +1060,38 @@ window.__ModuleLoader__.load({
           setToast(tt('statusCcSwitch'))
         } catch (error) {
           fail(error.message, error.hint)
+        }
+      }
+
+      function openFirstQuestionDialog(entry) {
+        if (!entry || !entry.sessionId) return
+        setFirstQuestion({ entry, requirement: '', busy: false, error: '' })
+      }
+
+      async function sendFirstQuestionNow() {
+        if (!firstQuestion) return
+        if (!firstQuestion.requirement.trim()) {
+          setFirstQuestion((current) =>
+            current ? { ...current, error: tt('firstQuestionRequired') } : current,
+          )
+          return
+        }
+        setFirstQuestion((current) => (current ? { ...current, busy: true, error: '' } : current))
+        try {
+          const data = await askFirstQuestion({
+            sessionId: firstQuestion.entry.sessionId,
+            requirement: firstQuestion.requirement,
+          })
+          setToast(tt('firstQuestionDone'))
+          setFirstQuestion(null)
+          try {
+            await refreshSessions(data.sessionId)
+          } catch {}
+          openSession(data.sessionId)
+        } catch (error) {
+          setFirstQuestion((current) =>
+            current ? { ...current, busy: false, error: error.message } : current,
+          )
         }
       }
 
@@ -1950,10 +1998,77 @@ window.__ModuleLoader__.load({
                           tt('dshAccept'),
                         )
                       : null,
+                    entry.sessionId
+                      ? h(
+                          Button,
+                          {
+                            variant: 'link',
+                            onClick: () => openFirstQuestionDialog(entry),
+                          },
+                          tt('firstQuestion'),
+                        )
+                      : null,
                   ),
                 ),
               ),
         ),
+        firstQuestion
+          ? h(
+              'div',
+              { className: 'cc-modalBackdrop', onClick: () => setFirstQuestion(null) },
+              h(
+                'div',
+                { className: 'cc-modal', onClick: (event) => event.stopPropagation() },
+                h(
+                  'div',
+                  { className: 'cc-cardTitle' },
+                  `${tt('firstQuestion')}：${firstQuestion.entry.title || firstQuestion.entry.sessionId}`,
+                ),
+                h('div', { className: 'cc-hint' }, tt('firstQuestionHint')),
+                h(
+                  'label',
+                  { className: 'cc-field' },
+                  h('span', { className: 'cc-label' }, tt('firstQuestionRequirement')),
+                  h('textarea', {
+                    className: 'cc-textarea',
+                    rows: 4,
+                    value: firstQuestion.requirement,
+                    placeholder: tt('firstQuestionPlaceholder'),
+                    onChange: (event) =>
+                      setFirstQuestion((current) =>
+                        current ? { ...current, requirement: event.target.value } : current,
+                      ),
+                  }),
+                ),
+                firstQuestion.error
+                  ? h(
+                      'div',
+                      { className: 'cc-notice' },
+                      h('div', { className: 'cc-noticeBody' }, firstQuestion.error),
+                    )
+                  : null,
+                h(
+                  'div',
+                  { className: 'cc-actions' },
+                  h(
+                    Button,
+                    {
+                      variant: 'primary',
+                      busy: firstQuestion.busy,
+                      disabled: firstQuestion.busy,
+                      onClick: sendFirstQuestionNow,
+                    },
+                    firstQuestion.busy ? tt('acceptanceRunning') : tt('firstQuestionSend'),
+                  ),
+                  h(
+                    Button,
+                    { variant: 'link', onClick: () => setFirstQuestion(null) },
+                    tt('acceptanceCancel'),
+                  ),
+                ),
+              ),
+            )
+          : null,
         dialog
           ? h(
               'div',
@@ -2118,6 +2233,11 @@ window.__ModuleLoader__.load({
           }),
         runClaudeAcceptance: (payload) =>
           request('/acceptance/claude', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          }),
+        askFirstQuestion: (payload) =>
+          request('/session/first-question', {
             method: 'POST',
             body: JSON.stringify(payload),
           }),
