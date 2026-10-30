@@ -98,6 +98,8 @@ window.__ModuleLoader__.load({
         firstQuestionSend: '发送首问',
         firstQuestionRequired: '请填写新要求',
         firstQuestionDone: '首问已发回该对话',
+        firstQuestionBusy: '正在读取对话并生成首问…',
+        existingSection: '在所有 DSH 对话中提问（可选，展开）',
         existingTitle: '在所有 DSH 对话中提问',
         existingHint: 'DSH 工作区的全部对话都可以选；Claude 会先读该对话与项目，再把首问发回原会话。',
         existingPick: '选择一个已有对话…',
@@ -246,6 +248,8 @@ window.__ModuleLoader__.load({
         firstQuestionSend: 'Send first question',
         firstQuestionRequired: 'Enter a requirement',
         firstQuestionDone: 'First question sent to the conversation',
+        firstQuestionBusy: 'Reading the conversation and drafting the first question…',
+        existingSection: 'Ask in any DSH conversation (optional; expand)',
         existingTitle: 'Ask in any DSH conversation',
         existingHint: 'Every conversation in the DSH workspace is selectable; Claude reads it and the project, then posts its first question back.',
         existingPick: 'Choose an existing conversation…',
@@ -1983,9 +1987,13 @@ window.__ModuleLoader__.load({
         h('div', { className: 'cc-grid' }, leftCard, rightCard),
         refinedCard,
         h(
-          'div',
-          { className: 'cc-card cc-existing' },
-          h('div', { className: 'cc-cardTitle' }, tt('existingTitle')),
+          'details',
+          { className: 'cc-accDetails' },
+          h('summary', null, tt('existingSection')),
+          h(
+            'div',
+            { className: 'cc-card cc-existing' },
+            h('div', { className: 'cc-cardTitle' }, tt('existingTitle')),
           h('div', { className: 'cc-hint' }, tt('existingHint')),
           h(
             'select',
@@ -2026,6 +2034,7 @@ window.__ModuleLoader__.load({
               },
               tt('firstQuestion'),
             ),
+          ),
           ),
         ),
         h(
@@ -2125,7 +2134,7 @@ window.__ModuleLoader__.load({
                       disabled: firstQuestion.busy,
                       onClick: sendFirstQuestionNow,
                     },
-                    firstQuestion.busy ? tt('acceptanceRunning') : tt('firstQuestionSend'),
+                    firstQuestion.busy ? tt('firstQuestionBusy') : tt('firstQuestionSend'),
                   ),
                   h(
                     Button,
