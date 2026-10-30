@@ -18,6 +18,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { attachAcceptance } from './lib/acceptance/host.js'
+import { attachReviewPrompt } from './lib/acceptance/review.js'
 import { executeAcceptance } from './lib/acceptance/kernel.js'
 import { extractTask, buildFacts } from './lib/acceptance/facts.js'
 
@@ -783,13 +784,22 @@ export function apply(ctx, config = {}) {
   }
 
   const acceptanceSettingsFile = path.join(dshHome(), 'claude-on-dsh', 'settings.json')
-  const acceptanceSettings = { autoAcceptance: true, manualAcceptance: true }
+  const acceptanceSettings = {
+    autoAcceptance: true,
+    manualAcceptance: true,
+    autoPrompt: true,
+    defaultAction: 'none',
+  }
   try {
     Object.assign(
       acceptanceSettings,
       JSON.parse(readFileSync(acceptanceSettingsFile, 'utf8').replace(/^\uFEFF/, '')),
     )
   } catch {}
+  if (typeof acceptanceSettings.autoPrompt !== 'boolean') acceptanceSettings.autoPrompt = true
+  if (!['claude', 'none'].includes(acceptanceSettings.defaultAction)) {
+    acceptanceSettings.defaultAction = 'none'
+  }
 
   const acceptanceOptions = {
     reportDir: (config.acceptance && config.acceptance.reportDir) || '.dsh/acceptance',
@@ -908,6 +918,85 @@ export function apply(ctx, config = {}) {
     }
     return ''
   }
+
+  async function runReview({ sessionId, meta, events, workspace, custom }) {
+    const facts = buildFacts({ sessionId, meta, events, workspace })
+    const context = [
+      `项目目录：${workspace}`,
+      `任务全文：${facts.task.summary || '未识别'}`,
+      `最近对话：\n${recentConversation(events, 12) || '无'}`,
+      `改动文件：${facts.changedFiles.slice(0, 30).map((file) => file.path).join(', ') || '无'}`,
+      `测试/验证命令：${
+        facts.commands
+          .filter((command) => command.kind === 'verification')
+          .slice(-8)
+          .map(
+            (command) =>
+              `${command.command} -> ${command.isError ? '失败' : '成功'}${
+                command.summary ? ` (${command.summary.slice(0, 300)})` : ''
+              }`,
+          )
+          .join('\n') || '无'
+      }`,
+      `git：${
+        facts.git && facts.git.available
+          ? String(facts.git.status || '').slice(0, 1500)
+          : '不可用'
+      }`,
+      `用户验收要求：${custom || '无'}`,
+    ].join('\n\n')
+    const prompt = [
+      '你是独立验收者。请阅读项目与这次 DSH 会话的真实测试记录，给出验收意见。',
+      '要求：',
+      '- 结论 verdict 只能是 pass / fail / uncertain；',
+      '- opinion 用自然语言说明实际验证了什么、哪些没有验证、是否回应了任务目标；',
+      '- evidence 是关键证据数组，引用真实命令、输出、文件或 git 状态；',
+      '- 无法验证的项必须标 uncertain，禁止猜 pass；',
+      '- 如果用户给了验收要求，必须优先对照；',
+      '',
+      '上下文：',
+      context,
+      '',
+      '输出 JSON { verdict, opinion, evidence }。',
+    ].join('\n')
+    const schema = {
+      type: 'object',
+      properties: {
+        verdict: { type: 'string', enum: ['pass', 'fail', 'uncertain'] },
+        opinion: { type: 'string' },
+        evidence: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['verdict', 'opinion', 'evidence'],
+      additionalProperties: false,
+    }
+    const executable = findCli(settings.claudeCliPath)
+    if (!executable) throw userError('没有找到 Claude Code CLI，无法生成验收意见', '', 500)
+    const run = startClaudeRun({
+      executable,
+      prompt,
+      cwd: workspace,
+      schema,
+      permissionMode: 'plan',
+      model: 'haiku',
+      timeoutMs: 120_000,
+      proxy: proxyInfo(),
+    })
+    const result = await run.promise
+    return result.data
+  }
+
+  const reviewPrompt = attachReviewPrompt({
+    ctx,
+    getSettings: () => acceptanceSettings,
+    runReview,
+    logger: (line) => {
+      try {
+        ctx.logger?.info?.(line)
+      } catch {
+        console.log(line)
+      }
+    },
+  })
 
   async function runFirstQuestion(sessionId, requirement) {
     const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(60_000))
@@ -1050,6 +1139,11 @@ export function apply(ctx, config = {}) {
     if (background && background !== question.trim()) lines.push(`背景：${background}`)
     lines.push('请据此继续推进；只有遇到无法从上下文推断的阻塞项才提问。')
     const message = lines.join('\n')
+    reviewPrompt.arm(sessionId, {
+      workspace,
+      title: text(title).trim() || path.basename(workspace || ''),
+      source: 'first-question',
+    })
     await ctx.sessionController.prompt(
       {
         sessionId,
@@ -1377,7 +1471,7 @@ export function apply(ctx, config = {}) {
 
     const requestId = randomUUID()
     // Arm before admission so the hook cannot miss the running -> idle edge.
-    acceptance.arm(created.sessionId, { workspace: projectDir, title: workspace.title, source: 'dispatch' })
+    reviewPrompt.arm(created.sessionId, { workspace: projectDir, title: workspace.title, source: 'dispatch' })
     // prompt's second argument is the required admission AbortSignal.
     try {
       await ctx.sessionController.prompt(
@@ -1391,7 +1485,7 @@ export function apply(ctx, config = {}) {
         AbortSignal.timeout(60_000),
       )
     } catch (error) {
-      acceptance.disarm(created.sessionId)
+      reviewPrompt.disarm(created.sessionId)
       throw error
     }
 
@@ -1997,6 +2091,12 @@ export function apply(ctx, config = {}) {
           }
           if (typeof body.manualAcceptance === 'boolean') {
             acceptanceSettings.manualAcceptance = body.manualAcceptance
+          }
+          if (typeof body.autoPrompt === 'boolean') {
+            acceptanceSettings.autoPrompt = body.autoPrompt
+          }
+          if (body.defaultAction === 'claude' || body.defaultAction === 'none') {
+            acceptanceSettings.defaultAction = body.defaultAction
           }
           await mkdir(path.dirname(acceptanceSettingsFile), { recursive: true })
           await writeFile(

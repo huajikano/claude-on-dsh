@@ -91,6 +91,12 @@ window.__ModuleLoader__.load({
         acceptanceDone: '验收完成',
         firstQuestion: '首问',
         chooseSession: '选择会话',
+        reviewSettings: 'DSH 完成后的验收',
+        reviewSettingsHint: '开启后，DSH 每轮结束会在原会话里出现验收选项；默认项也可以设成直接交给 Claude。',
+        autoPromptToggle: 'DSH 完成后自动出现验收选项',
+        defaultActionLabel: '默认项',
+        defaultActionNone: '不设默认（每次弹出三选一）',
+        defaultActionClaude: '自动交给 Claude 验收',
         firstQuestionHint: 'Claude 会读取该对话与项目，然后把首问发回这个对话；点「发送首问」才会消耗额度。',
         firstQuestionRequirement: '新要求',
         firstQuestionPlaceholder: '例如：在现有流程上增加并行分支，保持旧数据不丢。',
@@ -249,6 +255,12 @@ window.__ModuleLoader__.load({
         acceptanceDone: 'Acceptance complete',
         firstQuestion: 'First question',
         chooseSession: 'Choose conversation',
+        reviewSettings: 'Acceptance after DSH',
+        reviewSettingsHint: 'When enabled, a review choice appears in the original DSH conversation after each turn; the default can hand it straight to Claude.',
+        autoPromptToggle: 'Show the review choice after DSH finishes',
+        defaultActionLabel: 'Default',
+        defaultActionNone: 'No default (show three choices)',
+        defaultActionClaude: 'Hand to Claude automatically',
         firstQuestionHint: 'Claude reads this conversation and project, then posts its first question back here. Credits are spent only when you send.',
         firstQuestionRequirement: 'New requirement',
         firstQuestionPlaceholder: 'e.g. add parallel branches to the existing flow without losing old data.',
@@ -635,6 +647,8 @@ window.__ModuleLoader__.load({
         sendFirstQuestion,
         listSessions,
         currentSessionId,
+        getSettings,
+        saveSettings,
       } = props
       const tt = useCallback(
         (key, vars) => {
@@ -682,6 +696,10 @@ window.__ModuleLoader__.load({
       const [dialog, setDialog] = useState(null)
       const [firstQuestion, setFirstQuestion] = useState(null)
       const [allSessions, setAllSessions] = useState([])
+      const [reviewSettings, setReviewSettings] = useState({
+        autoPrompt: true,
+        defaultAction: 'none',
+      })
 
       const update = useCallback((patch) => {
         setForm((current) => ({ ...current, ...patch }))
@@ -710,6 +728,27 @@ window.__ModuleLoader__.load({
           )
         } catch {}
       }, [form, job, brief, answer, refined, promptText, desktopPrompt, desktopReply, phase, dispatch, consumedJobId])
+
+      useEffect(() => {
+        let stopped = false
+        getSettings()
+          .then((data) => {
+            if (!stopped && data) {
+              setReviewSettings((current) => ({
+                ...current,
+                autoPrompt: typeof data.autoPrompt === 'boolean' ? data.autoPrompt : current.autoPrompt,
+                defaultAction:
+                  data.defaultAction === 'claude' || data.defaultAction === 'none'
+                    ? data.defaultAction
+                    : current.defaultAction,
+              }))
+            }
+          })
+          .catch(() => {})
+        return () => {
+          stopped = true
+        }
+      }, [])
 
       /* Environment, history, and session status: load in parallel, then refresh. */
       useEffect(() => {
@@ -1755,6 +1794,45 @@ window.__ModuleLoader__.load({
         main,
         h(
           'div',
+          { className: 'cc-card cc-reviewSettings' },
+          h('div', { className: 'cc-cardTitle' }, tt('reviewSettings')),
+          h('div', { className: 'cc-hint' }, tt('reviewSettingsHint')),
+          h(
+            'label',
+            { className: 'cc-switch' },
+            h('input', {
+              type: 'checkbox',
+              checked: Boolean(reviewSettings.autoPrompt),
+              onChange: (event) => {
+                const value = event.target.checked
+                setReviewSettings((current) => ({ ...current, autoPrompt: value }))
+                saveSettings({ autoPrompt: value }).catch(() => {})
+              },
+            }),
+            tt('autoPromptToggle'),
+          ),
+          h(
+            'label',
+            { className: 'cc-field' },
+            h('span', { className: 'cc-label' }, tt('defaultActionLabel')),
+            h(
+              'select',
+              {
+                className: 'cc-select',
+                value: reviewSettings.defaultAction,
+                onChange: (event) => {
+                  const value = event.target.value
+                  setReviewSettings((current) => ({ ...current, defaultAction: value }))
+                  saveSettings({ defaultAction: value }).catch(() => {})
+                },
+              },
+              h('option', { value: 'none' }, tt('defaultActionNone')),
+              h('option', { value: 'claude' }, tt('defaultActionClaude')),
+            ),
+          ),
+        ),
+        h(
+          'div',
           { className: 'cc-history' },
           h('div', { className: 'cc-sectionTitle' }, tt('history')),
           history.length === 0
@@ -2173,6 +2251,12 @@ window.__ModuleLoader__.load({
             timeoutMs: 90_000,
           }),
         listSessions: () => request('/sessions'),
+        getSettings: () => request('/settings'),
+        saveSettings: (patch) =>
+          request('/settings', {
+            method: 'POST',
+            body: JSON.stringify(patch),
+          }),
         currentSessionId: () => {
           try {
             const scoped = ctx.sessions.scopeOf?.(ctx)
@@ -2539,6 +2623,11 @@ window.__ModuleLoader__.load({
   font-size: 12.5px;
 }
 .cc-existing { display: flex; flex-direction: column; gap: 10px; }
+.cc-reviewSettings { gap: 10px; }
+.cc-switch {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px; color: var(--dsw-alias-label-secondary); cursor: pointer;
+}
 .cc-toast {
   position: fixed; inset-block-end: 26px; inset-inline: 0; margin-inline: auto; z-index: 60;
   inline-size: fit-content; padding: 7px 14px; border-radius: 999px;
