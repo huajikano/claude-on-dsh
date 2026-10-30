@@ -167,6 +167,12 @@ window.__ModuleLoader__.load({
         desktopNoReply: '请先粘贴桌面版的回复。',
         historyOpen: '打开',
         noHistorySession: '无会话',
+        justNow: '刚刚',
+        minutesAgo: '{n} 分钟前',
+        hoursAgo: '{n} 小时前',
+        sessionRunning: '运行中',
+        currentSession: '当前',
+        sessionOpenHint: 'DSH 会话已创建。打开会话可以查看执行进度，也可以直接继续追问。',
       },
       en: {
         nav: 'Claude on DSH',
@@ -319,6 +325,12 @@ window.__ModuleLoader__.load({
         desktopNoReply: 'Paste the desktop reply first.',
         historyOpen: 'Open',
         noHistorySession: 'no session',
+        justNow: 'just now',
+        minutesAgo: '{n}m ago',
+        hoursAgo: '{n}h ago',
+        sessionRunning: 'running',
+        currentSession: 'current',
+        sessionOpenHint: 'The DSH session is ready. Open it to follow progress or keep asking follow-ups.',
       },
     }
 
@@ -375,7 +387,7 @@ window.__ModuleLoader__.load({
 
     function withHeader(title, body) {
       const name = title || '新项目'
-      return `# 项目交接：${name}\n\n> Claude on DSH 已完成首问与规划，以下是交给 DSH 的执行任务书。\n\n${body}`.trim()
+      return `# 项目交接：${name}\n\n> Claude on DSH 已完成首问与规划。请直接按下面的任务书开始执行；只有遇到无法从项目或任务书推断的阻塞项才提问。\n\n${body}`.trim()
     }
 
     function shortVersion(value) {
@@ -404,6 +416,15 @@ window.__ModuleLoader__.load({
       } catch {
         return ''
       }
+    }
+
+    function timeAgo(ms, tt) {
+      if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return ''
+      const diff = Math.max(0, Date.now() - ms)
+      if (diff < 60_000) return tt('justNow')
+      if (diff < 3_600_000) return tt('minutesAgo', { n: Math.floor(diff / 60_000) })
+      if (diff < 86_400_000) return tt('hoursAgo', { n: Math.floor(diff / 3_600_000) })
+      return timeText(ms)
     }
 
     /* ------------------------------------------------------------------ */
@@ -690,23 +711,37 @@ window.__ModuleLoader__.load({
         } catch {}
       }, [form, job, brief, answer, refined, promptText, desktopPrompt, desktopReply, phase, dispatch, consumedJobId])
 
-      /* Environment and history: read once, then refresh while active. */
+      /* Environment, history, and session status: load in parallel, then refresh. */
       useEffect(() => {
         let stopped = false
         const load = async () => {
-          try {
-            const data = await request('/detect')
-            if (!stopped) {
-              setDetect(data)
-              setDetectError('')
-            }
-          } catch (error) {
-            if (!stopped) setDetectError(error.message)
+          const [detectResult, historyResult, sessionsResult] = await Promise.allSettled([
+            request('/detect'),
+            request('/history'),
+            listSessions(),
+          ])
+          if (stopped) return
+          if (detectResult.status === 'fulfilled') {
+            setDetect(detectResult.value)
+            setDetectError('')
+          } else {
+            const reason = detectResult.reason
+            setDetectError(reason && reason.message ? reason.message : tt('detectionFailed'))
           }
-          try {
-            const data = await request('/history')
-            if (!stopped) setHistory(Array.isArray(data && data.items) ? data.items : [])
-          } catch {}
+          if (historyResult.status === 'fulfilled') {
+            setHistory(
+              Array.isArray(historyResult.value && historyResult.value.items)
+                ? historyResult.value.items
+                : [],
+            )
+          }
+          if (sessionsResult.status === 'fulfilled') {
+            setAllSessions(
+              Array.isArray(sessionsResult.value && sessionsResult.value.items)
+                ? sessionsResult.value.items
+                : [],
+            )
+          }
         }
         load()
         const timer = setInterval(load, 20000)
@@ -773,18 +808,6 @@ window.__ModuleLoader__.load({
         return () => clearTimeout(timer)
       }, [toast])
 
-      useEffect(() => {
-        let stopped = false
-        listSessions()
-          .then((data) => {
-            if (!stopped) setAllSessions(Array.isArray(data.items) ? data.items : [])
-          })
-          .catch(() => {})
-        return () => {
-          stopped = true
-        }
-      }, [])
-
       const cliReady = Boolean(detect && detect.cli && detect.cli.found && detect.cli.runnable)
       const desktopReady = Boolean(detect && detect.desktop && detect.desktop.found)
       const proxyApplicable = Boolean(detect && detect.proxy && detect.proxy.applicable)
@@ -802,6 +825,27 @@ window.__ModuleLoader__.load({
           { key: 'stepHandoff' },
         ],
         [],
+      )
+
+      const activeSessionId = (() => {
+        try {
+          return typeof currentSessionId === 'function'
+            ? currentSessionId()
+            : currentSessionId || ''
+        } catch {
+          return ''
+        }
+      })()
+      const sortedSessions = useMemo(
+        () =>
+          [...allSessions].sort(
+            (left, right) => (right.updatedAt || 0) - (left.updatedAt || 0),
+          ),
+        [allSessions],
+      )
+      const liveSessions = useMemo(
+        () => new Map(allSessions.map((session) => [session.sessionId, session])),
+        [allSessions],
       )
 
       function fail(message, hint) {
@@ -1001,8 +1045,8 @@ window.__ModuleLoader__.load({
           current =
             typeof currentSessionId === 'function' ? currentSessionId() : currentSessionId || ''
         } catch {}
-        const target = current || (allSessions[0] && allSessions[0].sessionId) || ''
-        const item = allSessions.find((session) => session.sessionId === target)
+        const target = current || (sortedSessions[0] && sortedSessions[0].sessionId) || ''
+        const item = sortedSessions.find((session) => session.sessionId === target)
         openFirstQuestionDialog({
           sessionId: target,
           projectDir: item && item.cwd,
@@ -1371,13 +1415,21 @@ window.__ModuleLoader__.load({
           ),
         )
       } else if (phase === 'dispatched') {
+        const dispatchedLive = dispatch.sessionId ? liveSessions.get(dispatch.sessionId) : undefined
         rightCard = h(
           'div',
           { className: 'cc-card' },
           h(
             'div',
             { className: 'cc-success' },
-            h('div', { className: 'cc-successTitle' }, tt('dispatched')),
+            h(
+              'div',
+              { className: 'cc-successHead' },
+              h('div', { className: 'cc-successTitle' }, tt('dispatched')),
+              dispatchedLive && dispatchedLive.running
+                ? h('span', { className: 'cc-badge on' }, tt('sessionRunning'))
+                : null,
+            ),
             h('div', { className: 'cc-successBody' }, dispatch.title || form.projectName || form.projectDir),
             dispatch.permission
               ? h(
@@ -1396,6 +1448,7 @@ window.__ModuleLoader__.load({
                 )
               : null,
             h('code', { className: 'cc-code' }, dispatch.sessionId || ''),
+            h('div', { className: 'cc-hint' }, tt('sessionOpenHint')),
           ),
           h(
             'div',
@@ -1676,27 +1729,27 @@ window.__ModuleLoader__.load({
         ),
         h(
           'div',
-          { className: 'cc-quickActions' },
-          h(Button, { variant: 'ghost', onClick: openCurrentFirstQuestion }, tt('chooseSession')),
-        ),
-        h(
-          'div',
-          { className: 'cc-steps' },
-          steps.map((step, index) =>
-            h(
-              React.Fragment,
-              { key: step.key },
-              index > 0 ? h('span', { className: 'cc-sep', key: `sep-${index}` }, '›') : null,
+          { className: 'cc-toolbar' },
+          h(
+            'div',
+            { className: 'cc-steps' },
+            steps.map((step, index) =>
               h(
-                'span',
-                {
-                  className: `cc-step${index < stepIndex ? ' done' : index === stepIndex ? ' active' : ''}`,
-                },
-                h('b', null, index < stepIndex ? '✓' : String(index + 1)),
-                h('span', null, tt(step.key)),
+                React.Fragment,
+                { key: step.key },
+                index > 0 ? h('span', { className: 'cc-sep', key: `sep-${index}` }, '›') : null,
+                h(
+                  'span',
+                  {
+                    className: `cc-step${index < stepIndex ? ' done' : index === stepIndex ? ' active' : ''}`,
+                  },
+                  h('b', null, index < stepIndex ? '✓' : String(index + 1)),
+                  h('span', null, tt(step.key)),
+                ),
               ),
             ),
           ),
+          h(Button, { variant: 'ghost', onClick: openCurrentFirstQuestion }, tt('chooseSession')),
         ),
         notice ? h(Notice, { notice, tt }) : null,
         main,
@@ -1709,17 +1762,36 @@ window.__ModuleLoader__.load({
             : h(
                 'ul',
                 { className: 'cc-historyList' },
-                history.slice(0, 6).map((entry) =>
-                  h(
+                history.slice(0, 6).map((entry) => {
+                  const live = entry.sessionId ? liveSessions.get(entry.sessionId) : undefined
+                  return h(
                     'li',
                     { key: entry.id || `${entry.sessionId}-${entry.at}` },
                     h(
                       'div',
                       { className: 'cc-historyMain' },
-                      h('span', { className: 'cc-historyTitle' }, entry.title || entry.projectDir || ''),
+                      h(
+                        'div',
+                        { className: 'cc-historyTitleRow' },
+                        h(
+                          'span',
+                          { className: 'cc-historyTitle' },
+                          entry.title || entry.projectDir || '',
+                        ),
+                        entry.source === 'first-question'
+                          ? h('span', { className: 'cc-badge' }, tt('firstQuestion'))
+                          : null,
+                        live && live.running
+                          ? h('span', { className: 'cc-badge on' }, tt('sessionRunning'))
+                          : null,
+                      ),
                       h('span', { className: 'cc-historyPath' }, entry.projectDir || ''),
                     ),
-                    h('span', { className: 'cc-historyTime' }, timeText(entry.at)),
+                    h(
+                      'span',
+                      { className: 'cc-historyTime', title: timeText(entry.at) },
+                      timeAgo(entry.at, tt),
+                    ),
                     entry.sessionId
                       ? h(
                           Button,
@@ -1747,8 +1819,8 @@ window.__ModuleLoader__.load({
                           tt('firstQuestion'),
                         )
                       : null,
-                  ),
-                ),
+                  )
+                }),
               ),
         ),
         firstQuestion
@@ -1808,13 +1880,27 @@ window.__ModuleLoader__.load({
                       },
                     },
                     h('option', { value: '' }, tt('existingPick')),
-                    allSessions.map((item) =>
-                      h(
-                        'option',
-                        { value: item.sessionId, key: item.sessionId },
-                        `${(item.cwd || '').split(/[\\/]/).filter(Boolean).pop() || item.cwd} · ${item.sessionId.slice(-8)}`,
-                      ),
-                    ),
+                    !firstQuestion.entry.sessionId ||
+                    sortedSessions.some(
+                      (item) => item.sessionId === firstQuestion.entry.sessionId,
+                    )
+                      ? null
+                      : h(
+                          'option',
+                          { value: firstQuestion.entry.sessionId },
+                          `${firstQuestion.entry.title || firstQuestion.entry.sessionId} · ${tt('currentSession')}`,
+                        ),
+                    sortedSessions.map((item) => {
+                      const label = [
+                        item.sessionId === activeSessionId ? `[${tt('currentSession')}]` : '',
+                        (item.cwd || '').split(/[\\/]/).filter(Boolean).pop() || item.cwd,
+                        item.running ? tt('sessionRunning') : timeAgo(item.updatedAt, tt),
+                        item.sessionId.slice(-6),
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')
+                      return h('option', { value: item.sessionId, key: item.sessionId }, label)
+                    }),
                   ),
                 ),
                 h(
@@ -2191,6 +2277,9 @@ window.__ModuleLoader__.load({
 .cc-dot { inline-size: 6px; block-size: 6px; border-radius: 50%; background: var(--dsw-alias-state-idle-primary); flex: 0 0 auto; }
 .cc-dot.on { background: var(--dsw-alias-state-success-primary); }
 .cc-dot.warn { background: var(--dsw-alias-state-warn-primary); }
+.cc-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cc-toolbar > .cc-btn { flex: 0 0 auto; }
+.cc-toolbar .cc-steps { flex: 1 1 auto; min-inline-size: 0; }
 .cc-steps {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
   padding: 10px 14px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px;
@@ -2316,6 +2405,7 @@ window.__ModuleLoader__.load({
   border: 1px solid color-mix(in oklab, var(--dsw-alias-state-success-primary) 40%, transparent);
   background: color-mix(in oklab, var(--dsw-alias-state-success-primary) 8%, var(--dsw-alias-bg-base));
 }
+.cc-successHead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cc-successTitle { font-weight: 600; color: var(--dsw-alias-state-success-primary); }
 .cc-successBody { color: var(--dsw-alias-label-secondary); }
 .cc-code { font-size: 11px; color: var(--dsw-alias-label-secondary); word-break: break-all; }
@@ -2401,13 +2491,14 @@ window.__ModuleLoader__.load({
 .cc-history { display: flex; flex-direction: column; gap: 8px; padding-block-start: 4px; }
 .cc-historyList { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .cc-historyList li {
-  display: flex; align-items: center; gap: 10px; min-inline-size: 0;
+  display: flex; align-items: center; gap: 10px; min-inline-size: 0; flex-wrap: wrap; row-gap: 4px;
   padding: 7px 10px; border-radius: 8px; border: 1px solid transparent;
 }
 .cc-historyList li { padding: 9px 12px; border-radius: 10px; }
 .cc-historyList li:hover { background: var(--dsw-alias-bg-layer-1); border-color: var(--dsw-alias-border-l1); }
 .cc-historyMain { display: flex; flex-direction: column; min-inline-size: 0; flex: 1 1 auto; }
-.cc-historyTitle { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-historyTitleRow { display: flex; align-items: center; gap: 6px; min-inline-size: 0; }
+.cc-historyTitle { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-inline-size: 0; flex: 0 1 auto; }
 .cc-historyPath { font-size: 11px; color: var(--dsw-alias-label-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cc-historyTime { font-size: 11px; color: var(--dsw-alias-label-secondary); white-space: nowrap; }
 .cc-historyMuted { font-size: 11px; color: var(--dsw-alias-label-secondary); opacity: 0.7; }
@@ -2431,7 +2522,16 @@ window.__ModuleLoader__.load({
 }
 .cc-modalClose:hover { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
 .cc-modal .cc-cardTitle { padding-inline-end: 26px; }
-.cc-quickActions { display: flex; justify-content: flex-end; margin-block: -2px 10px; }
+.cc-badge {
+  display: inline-flex; align-items: center; block-size: 16px; padding: 0 6px;
+  border-radius: 999px; background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary); font-size: 10px; line-height: 1;
+  white-space: nowrap; flex: 0 0 auto;
+}
+.cc-badge.on {
+  color: var(--dsw-alias-state-success-primary);
+  background: color-mix(in oklab, var(--dsw-alias-state-success-primary) 14%, var(--dsw-alias-bg-base));
+}
 .cc-select {
   inline-size: 100%; padding: 8px 10px; border-radius: 8px;
   border: 1px solid var(--dsw-alias-border-l1);

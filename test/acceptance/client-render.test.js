@@ -132,7 +132,10 @@ test('every tt() key exists in both dictionaries', () => {
 })
 
 test('setup phase renders', () => {
-  assert.ok(contains(render(null), '从一个目标开始'))
+  const tree = render(null)
+  assert.ok(contains(tree, '从一个目标开始'))
+  assert.ok(contains(tree, '选择会话'))
+  assert.ok(contains(tree, '项目设定'))
 })
 
 test('refined phase focuses on the handoff and folds the setup away', () => {
@@ -163,6 +166,8 @@ test('dispatched phase does not bring back the deleted acceptance section', () =
     dispatch: { state: 'done', sessionId: 'session-x', title: 'Done Project', permission: 'danger-full-access' },
   })
   assert.ok(contains(tree, '已派发，DSH 开始执行'))
+  assert.ok(contains(tree, 'DSH 会话已创建'))
+  assert.ok(contains(tree, '打开会话'))
   assert.ok(!contains(tree, 'Claude 验收（可选，展开查看）'))
   assert.ok(!contains(tree, '立即验收'))
 })

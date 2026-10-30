@@ -1048,6 +1048,7 @@ export function apply(ctx, config = {}) {
     lines.push(`用户回答：${answer}`)
     const background = text(brief).trim()
     if (background && background !== question.trim()) lines.push(`背景：${background}`)
+    lines.push('请据此继续推进；只有遇到无法从上下文推断的阻塞项才提问。')
     const message = lines.join('\n')
     await ctx.sessionController.prompt(
       {
