@@ -779,7 +779,7 @@ export function apply(ctx, config = {}) {
       schema,
       systemPrompt,
       permissionMode: 'plan',
-      model: settings.model,
+      model: '',
       timeoutMs,
       proxy: proxyInfo(),
     })
@@ -860,6 +860,26 @@ export function apply(ctx, config = {}) {
     return lines.slice(-limit).join('\n---\n')
   }
 
+  function lastAssistantText(events) {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index]
+      if (!event || event.type !== 'assistant/message') continue
+      const data = event.data || {}
+      const blocks = Array.isArray(data.content)
+        ? data.content
+        : Array.isArray(data.message && data.message.content)
+          ? data.message.content
+          : []
+      const text = blocks
+        .filter((part) => part && part.type === 'text')
+        .map((part) => part.text)
+        .join('\n')
+        .trim()
+      if (text) return text
+    }
+    return ''
+  }
+
   async function runFirstQuestion(sessionId, requirement) {
     const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(60_000))
     const workspace = inspected.meta && inspected.meta.cwd
@@ -871,8 +891,8 @@ export function apply(ctx, config = {}) {
       workspace,
     })
     const context = [
-      `任务摘要：${facts.task.summary ? facts.task.summary.slice(0, 800) : '未识别'}`,
-      `最近对话：\n${recentConversation(inspected.events, 6) || '无'}`,
+      `任务全文：${facts.task.summary || '未识别'}`,
+      `最近对话：\n${recentConversation(inspected.events, 8) || '无'}`,
       `改动文件：${facts.changedFiles.slice(0, 20).map((file) => file.path).join(', ') || '无'}`,
       `最近验证命令：${
         facts.commands
@@ -881,7 +901,11 @@ export function apply(ctx, config = {}) {
           .map((command) => `${command.command} -> ${command.isError ? '失败' : '成功'}`)
           .join('; ') || '无'
       }`,
-      `git：${JSON.stringify(facts.git).slice(0, 500)}`,
+      `git：${
+        facts.git && facts.git.available
+          ? String(facts.git.status || '').slice(0, 1500)
+          : '不可用'
+      }`,
     ].join('\n\n')
     const prompt = [
       '你在一个已经存在的 DSH 对话中接手。请先根据下面的上下文了解项目和之前的对话，',
@@ -920,7 +944,7 @@ export function apply(ctx, config = {}) {
           cwd: workspace,
           schema,
           permissionMode: 'plan',
-          model: settings.model,
+          model: 'haiku',
           timeoutMs: 120_000,
           proxy: proxyInfo(),
         })
@@ -930,17 +954,23 @@ export function apply(ctx, config = {}) {
         brief = text(result.data.brief).trim()
       } catch (error) {
         try {
-          ctx.logger?.warn?.(`first-question Claude failed: ${error.message}`)
+          ctx.logger?.warn?.(
+            `first-question Claude failed: ${error.message}${error.hint ? ` | ${error.hint}` : ''}`,
+          )
         } catch {}
+        throw userError(
+          'Claude 生成首问失败',
+          `${error.message}${error.hint ? `：${error.hint}` : ''}`,
+          502,
+        )
       }
     }
     if (!question) {
-      const recent = recentConversation(inspected.events, 2)
-      understanding = recent
-        ? `最近一轮对话：${recent.slice(-600)}`
-        : `项目目录：${workspace}`
-      question = requirement
-      brief = `[Claude 首问]\n${requirement}\n\n背景：${understanding.slice(0, 600)}`
+      throw userError(
+        'Claude 没有返回首问',
+        executable ? '请重试；若持续失败，检查 Claude Code 的模型配置。' : '没有找到 Claude Code CLI。',
+        502,
+      )
     }
     if (!brief) brief = `[Claude 首问]\n${question}\n\n背景：${understanding}`
     let live = ctx.sessions.get(sessionId)
@@ -1100,7 +1130,7 @@ export function apply(ctx, config = {}) {
       },
       config: {
         permissionMode: settings.permissionMode,
-        model: settings.model,
+        model: '',
         timeoutMs: settings.timeoutMs,
       },
       now: Date.now(),
@@ -1151,7 +1181,7 @@ export function apply(ctx, config = {}) {
         schema: BRIEF_SCHEMA,
         systemPrompt: COMMANDER_SYSTEM,
         permissionMode,
-        model: settings.model,
+        model: '',
         timeoutMs: settings.timeoutMs,
         proxy,
       })
@@ -1173,7 +1203,7 @@ export function apply(ctx, config = {}) {
       schema: REFINE_SCHEMA,
       systemPrompt: COMMANDER_SYSTEM,
       permissionMode,
-      model: settings.model,
+      model: '',
       timeoutMs: settings.timeoutMs,
       proxy,
     })
@@ -1709,7 +1739,7 @@ export function apply(ctx, config = {}) {
               cwd: dir,
               schema,
               permissionMode: 'plan',
-              model: settings.model,
+              model: '',
               timeoutMs: 120_000,
               proxy: proxyInfo(),
             })
