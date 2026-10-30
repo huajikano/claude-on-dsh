@@ -39,6 +39,7 @@ export const inject = [
 const ROUTE = '/api/claude-on-dsh'
 const CLI_PROBE_TTL_MS = 60_000
 const DETECT_TTL_MS = 2_000
+const DETECT_STATIC_TTL_MS = 60_000
 const JOB_KEEP = 16
 const HISTORY_KEEP = 24
 
@@ -53,6 +54,10 @@ const DEFAULTS = {
 }
 
 const MODES = new Set(['plan', 'dontAsk', 'acceptEdits', 'bypassPermissions', 'auto'])
+
+/** Modes the panel may request for a planning run. A browser request cannot
+ * escalate beyond these; only an explicit config value may. */
+const PLANNING_MODES = new Set(['plan', 'dontAsk', 'acceptEdits'])
 
 const COMMANDER_SYSTEM = [
   '你是 DSH 的「Claude 指挥官」，只负责三件事：理解需求、提出一个决定方案走向的首问、写一份可以直接执行的交接书。',
@@ -307,18 +312,26 @@ function probeTcp(host, port, timeoutMs = 700) {
 }
 
 async function probeProxy(baseUrl) {
-  if (!baseUrl) return { url: '', host: '', port: 0, reachable: false, local: true }
+  // Only a local proxy is something we can check with a TCP probe. A remote or
+  // official endpoint is "not applicable", not "unreachable": warning about it
+  // would tell users without CC Switch that their working setup is broken.
+  if (!baseUrl) {
+    return { url: '', host: '', port: 0, reachable: false, local: true, applicable: false, reason: 'no-base-url' }
+  }
   let parsed
   try {
     parsed = new URL(baseUrl)
   } catch {
-    return { url: baseUrl, host: '', port: 0, reachable: false, local: true }
+    return { url: baseUrl, host: '', port: 0, reachable: false, local: true, applicable: false, reason: 'invalid-url' }
   }
   const host = parsed.hostname
   const local = host === '127.0.0.1' || host === 'localhost' || host === '::1'
   const port = parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80
-  const reachable = local ? await probeTcp(host, port) : false
-  return { url: baseUrl, host, port, reachable, local }
+  if (!local) {
+    return { url: baseUrl, host, port, reachable: false, local: false, applicable: false, reason: 'remote' }
+  }
+  const reachable = await probeTcp(host, port)
+  return { url: baseUrl, host, port, reachable, local: true, applicable: true }
 }
 
 /* ------------------------------------------------------------------ */
@@ -436,6 +449,17 @@ function normalizeMode(value, fallback) {
   const mode = text(value).trim()
   if (MODES.has(mode)) return mode
   return MODES.has(fallback) ? fallback : 'plan'
+}
+
+/**
+ * Resolve the permission mode for a planning run. A browser request may only
+ * ask for the three panel modes; elevated modes (bypassPermissions/auto) can
+ * come from the operator's config, never from a request body.
+ */
+export function planningPermissionMode(requested, fallback) {
+  const mode = text(requested).trim()
+  if (PLANNING_MODES.has(mode)) return mode
+  return normalizeMode(fallback, 'plan')
 }
 
 function cliArgs({ permissionMode, schema, model, systemPrompt }) {
@@ -707,16 +731,26 @@ async function readHistory() {
   }
 }
 
-async function appendHistory(entry) {
+async function writeHistoryEntry(entry) {
   const list = await readHistory()
   list.unshift(entry)
   const trimmed = list.slice(0, HISTORY_KEEP)
   const file = historyFile()
   await mkdir(path.dirname(file), { recursive: true })
-  const temporary = `${file}.${process.pid}.tmp`
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`
   await writeFile(temporary, `${JSON.stringify(trimmed, null, 2)}\n`, 'utf8')
   await rename(temporary, file)
   return trimmed
+}
+
+// History is read-modify-write. Serialize appends so two dispatches (or a
+// dispatch plus a first-question send) cannot clobber each other's record.
+let historyWrite = Promise.resolve()
+
+function appendHistory(entry) {
+  const task = historyWrite.then(() => writeHistoryEntry(entry))
+  historyWrite = task.catch(() => {})
+  return task
 }
 
 /* ------------------------------------------------------------------ */
@@ -740,6 +774,7 @@ export function apply(ctx, config = {}) {
 
   const cliCache = { path: '', version: '', checkedAt: 0, error: '' }
   const detectCache = { at: 0, value: null }
+  const staticCache = { at: 0, value: null }
   const { jobs, start, serialize } = createJobs()
 
   const proxyInfo = () => {
@@ -779,42 +814,36 @@ export function apply(ctx, config = {}) {
       schema,
       systemPrompt,
       permissionMode: 'plan',
-      model: '',
+      model: settings.model,
       timeoutMs,
       proxy: proxyInfo(),
     })
     return run.promise
   }
 
-  // Lean mode: no automatic gate and no session writes. The only acceptance
-  // path is the explicit "验收" action that sends a brief back to the original
-  // DSH session. The legacy 1.0.1-style gate is opt-in via
-  // acceptance.legacyGate and never injects messages.
-  const legacyGate = config && config.acceptance && config.acceptance.legacyGate === true
-  const acceptance = legacyGate
-    ? attachAcceptance({
-        ctx,
-        config,
-        runJudge: judgeRunner,
-        logger: (line) => {
-          try {
-            ctx.logger?.info?.(line)
-          } catch {
-            console.log(line)
-          }
-        },
-      })
-    : {
-        arm() {},
-        disarm() {},
-        setAuto() {},
-        status() {
-          return undefined
-        },
-        gatePolicy: 'off',
+  // The automatic (1.0.1-style) gate is opt-in via acceptance.legacyGate.
+  // Manual acceptance — the panel's "立即验收", /acceptance/run, and
+  // /acceptance/claude — always shares the same hooks object, so run/skip/status
+  // exist in every mode. When the legacy gate is off we pin its policy to "off"
+  // so no turn can trigger it, but manual runs still work.
+  const legacyGate = Boolean(config && config.acceptance && config.acceptance.legacyGate === true)
+  const gateConfig = legacyGate
+    ? config
+    : { ...config, acceptance: { ...(config.acceptance || {}), gatePolicy: 'off' } }
+  const acceptance = attachAcceptance({
+    ctx,
+    config: gateConfig,
+    runJudge: judgeRunner,
+    logger: (line) => {
+      try {
+        ctx.logger?.info?.(line)
+      } catch {
+        console.log(line)
       }
+    },
+  })
 
-  acceptance.setAuto(acceptanceSettings.autoAcceptance)
+  if (legacyGate) acceptance.setAuto(acceptanceSettings.autoAcceptance)
 
   async function runManualAcceptance(sessionId, opinion = '') {
     const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(60_000))
@@ -884,7 +913,7 @@ export function apply(ctx, config = {}) {
     const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(60_000))
     const workspace = inspected.meta && inspected.meta.cwd
     if (!workspace) throw userError('会话缺少 workspace，无法读取项目', '', 400)
-    const facts = buildFacts({
+    const facts = await buildFacts({
       sessionId,
       meta: inspected.meta,
       events: inspected.events,
@@ -947,7 +976,7 @@ export function apply(ctx, config = {}) {
           cwd: workspace,
           schema,
           permissionMode: 'plan',
-          model: 'haiku',
+          model: settings.model || 'haiku',
           timeoutMs: 120_000,
           proxy: proxyInfo(),
         })
@@ -982,7 +1011,7 @@ export function apply(ctx, config = {}) {
     return json({ sessionId, understanding, question, brief, choices, sent: false })
   }
 
-  async function sendFirstQuestionToSession(sessionId, question, answer, brief) {
+  async function sendFirstQuestionToSession(sessionId, question, answer, brief, requirement, projectDir, title) {
     let live = ctx.sessions.get(sessionId)
     if (!live) {
       try {
@@ -990,23 +1019,70 @@ export function apply(ctx, config = {}) {
         live = ctx.sessions.get(sessionId)
       } catch {}
     }
+    let permission = 'unchanged'
     if (live) {
       try {
         ctx.permissionPresets.set(live, 'danger-full-access')
-      } catch {}
+        permission = ctx.permissionPresets.current(live)
+      } catch {
+        permission = 'custom'
+      }
     }
-    const extra = brief && question && !brief.includes(question) ? `\n\n交接背景：${brief}` : ''
-    const text = `[Claude 首问]\n${question}\n\n用户回答：${answer}${extra}`
+    let workspace = expand(projectDir)
+    if (!isDir(workspace)) {
+      try {
+        const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(20_000))
+        workspace = inspected.meta && inspected.meta.cwd ? inspected.meta.cwd : ''
+      } catch {
+        workspace = ''
+      }
+    }
+    // The handoff must carry the user's original requirement: the question and
+    // answer alone rarely tell DSH what to build. The background is always
+    // appended (unless it is byte-identical to the question), because the
+    // generated brief is expected to repeat the question as part of its text.
+    const lines = ['[Claude 首问]']
+    const request = text(requirement).trim()
+    if (request) lines.push(`新要求：${request}`)
+    lines.push(`首问：${question}`)
+    lines.push(`用户回答：${answer}`)
+    const background = text(brief).trim()
+    if (background && background !== question.trim()) lines.push(`背景：${background}`)
+    const message = lines.join('\n')
     await ctx.sessionController.prompt(
       {
         sessionId,
         requestId: randomUUID(),
         mode: 'queue',
-        content: [{ type: 'text', text }],
+        content: [{ type: 'text', text: message }],
         clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       },
       AbortSignal.timeout(60_000),
     )
+    // First-question sessions are real DSH conversations too: record them so
+    // the acceptance list and `acceptancePayload` can resolve their workspace
+    // after a reload instead of falling back to "no session".
+    if (workspace) {
+      const record = {
+        id: randomUUID(),
+        at: Date.now(),
+        title: text(title).trim() || path.basename(workspace),
+        projectDir: workspace,
+        sessionId,
+        workspaceId: '',
+        engine: 'cli',
+        chars: message.length,
+        costUsd: null,
+        durationMs: null,
+        permission,
+        source: 'first-question',
+      }
+      try {
+        await appendHistory(record)
+      } catch (error) {
+        ctx.logger?.warn?.(`[claude-on-dsh] 无法写入首问历史：${messageOf(error)}`)
+      }
+    }
     return json({ sessionId, sent: true })
   }
 
@@ -1048,10 +1124,15 @@ export function apply(ctx, config = {}) {
   async function acceptanceList() {
     const history = await readHistory()
     const items = []
+    const seen = new Set()
     for (const entry of history) {
       if (!entry.sessionId || !entry.projectDir) continue
+      // Re-sending a first question appends another record for the same
+      // conversation; the acceptance list is keyed by session, so show it once.
+      if (seen.has(entry.sessionId)) continue
       const disk = await readAcceptanceFiles(entry.projectDir, entry.sessionId)
       if (!disk.report) continue
+      seen.add(entry.sessionId)
       items.push({
         sessionId: entry.sessionId,
         title: entry.title || entry.projectDir,
@@ -1067,41 +1148,57 @@ export function apply(ctx, config = {}) {
     return items
   }
 
-  async function cliInfo() {
-    const path = findCli(settings.claudeCliPath)
-    if (path !== cliCache.path || Date.now() - cliCache.checkedAt > CLI_PROBE_TTL_MS) {
-      cliCache.path = path
-      cliCache.checkedAt = Date.now()
-      cliCache.version = ''
-      cliCache.error = ''
-      if (path) {
-        const probe = await runProcess(path, ['--version'], { timeoutMs: 8_000 })
-        const line = text(probe.stdout || probe.stderr)
-          .trim()
-          .split(/\r?\n/)
-          .filter(Boolean)
-          .pop()
-        cliCache.version = line ?? ''
-        if (probe.code !== 0 && !cliCache.version) cliCache.error = tail(probe.stderr, 300)
-      }
-    }
+  function cliValue() {
     return {
-      found: Boolean(path),
-      path,
+      found: Boolean(cliCache.path),
+      path: cliCache.path,
       version: cliCache.version,
-      runnable: Boolean(path) && /\.exe$/i.test(path),
+      runnable: Boolean(cliCache.path) && /\.exe$/i.test(cliCache.path),
       error: cliCache.error,
     }
   }
 
+  async function cliInfo() {
+    const now = Date.now()
+    // `findCli` stats a dozen paths and the version probe spawns a process;
+    // both are stable for a minute, so reuse the cache without re-discovering.
+    if (now - cliCache.checkedAt <= CLI_PROBE_TTL_MS) return cliValue()
+    const path = findCli(settings.claudeCliPath)
+    cliCache.path = path
+    cliCache.checkedAt = now
+    cliCache.version = ''
+    cliCache.error = ''
+    if (path) {
+      const probe = await runProcess(path, ['--version'], { timeoutMs: 8_000 })
+      const line = text(probe.stdout || probe.stderr)
+        .trim()
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .pop()
+      cliCache.version = line ?? ''
+      if (probe.code !== 0 && !cliCache.version) cliCache.error = tail(probe.stderr, 300)
+    }
+    return cliValue()
+  }
+
   async function detect() {
-    if (detectCache.value && Date.now() - detectCache.at < DETECT_TTL_MS) return detectCache.value
-    const cli = await cliInfo()
-    const desktop = findDesktop(settings.desktopAppPath)
-    const ccSwitch = findCcSwitch(settings.ccSwitchPath)
+    const started = Date.now()
+    if (detectCache.value && started - detectCache.at < DETECT_TTL_MS) return detectCache.value
+    // Path discovery and settings reads are stable for a long time but touch
+    // Program Files and the profile; only probe them once a minute. Live state
+    // (proxy reachability, CC Switch attachment, CLI version) keeps the short
+    // TTL so the status chips stay truthful.
+    if (!staticCache.value || started - staticCache.at >= DETECT_STATIC_TTL_MS) {
+      staticCache.value = {
+        desktop: findDesktop(settings.desktopAppPath),
+        ccSwitch: findCcSwitch(settings.ccSwitchPath),
+        claudeSettings: readClaudeSettings(),
+      }
+      staticCache.at = started
+    }
+    const { desktop, ccSwitch, claudeSettings } = staticCache.value
+    const [cli, proxy] = await Promise.all([cliInfo(), probeProxy(claudeSettings.baseUrl)])
     const liveState = readJsonSafe(ccSwitch.liveStatePath)
-    const claudeSettings = readClaudeSettings()
-    const proxy = await probeProxy(claudeSettings.baseUrl)
     const liveApps = liveState && liveState.apps && typeof liveState.apps === 'object' ? liveState.apps : null
     const appState = liveApps
       ? Object.fromEntries(
@@ -1142,8 +1239,9 @@ export function apply(ctx, config = {}) {
       },
       config: {
         permissionMode: settings.permissionMode,
-        model: '',
+        model: settings.model,
         timeoutMs: settings.timeoutMs,
+        legacyGate,
       },
       now: Date.now(),
     }
@@ -1177,7 +1275,10 @@ export function apply(ctx, config = {}) {
 
     const projectDir = expand(payload.projectDir)
     const cwd = isDir(projectDir) ? projectDir : os.tmpdir()
-    const permissionMode = normalizeMode(payload.permissionMode, settings.permissionMode)
+    // The panel only offers the three read-ish modes. Never let a request body
+    // smuggle in bypassPermissions/auto; an operator can still opt into those
+    // through the plugin config, which this falls back to.
+    const permissionMode = planningPermissionMode(payload.permissionMode, settings.permissionMode)
     const proxy = proxyInfo()
     if (kind === 'brief') {
       const goal = text(payload.goal).trim()
@@ -1193,7 +1294,7 @@ export function apply(ctx, config = {}) {
         schema: BRIEF_SCHEMA,
         systemPrompt: COMMANDER_SYSTEM,
         permissionMode,
-        model: '',
+        model: settings.model,
         timeoutMs: settings.timeoutMs,
         proxy,
       })
@@ -1215,7 +1316,7 @@ export function apply(ctx, config = {}) {
       schema: REFINE_SCHEMA,
       systemPrompt: COMMANDER_SYSTEM,
       permissionMode,
-      model: '',
+      model: settings.model,
       timeoutMs: settings.timeoutMs,
       proxy,
     })
@@ -1387,6 +1488,7 @@ export function apply(ctx, config = {}) {
       `& ${quote(executable)} --append-system-prompt $system $prompt`,
       "Write-Host ''",
       "Read-Host '按 Enter 关闭窗口'",
+      `Remove-Item -LiteralPath ${[systemFile, promptFile, script].map(quote).join(', ')} -Force -ErrorAction SilentlyContinue`,
     ].join('\n')
     await writeFile(script, ps, 'utf8')
     const wt = findWt()
@@ -1751,7 +1853,7 @@ export function apply(ctx, config = {}) {
               cwd: dir,
               schema,
               permissionMode: 'plan',
-              model: '',
+              model: settings.model,
               timeoutMs: 120_000,
               proxy: proxyInfo(),
             })
@@ -1867,10 +1969,21 @@ export function apply(ctx, config = {}) {
         const question = text(body.question).trim()
         const answer = text(body.answer).trim()
         const brief = text(body.brief).trim()
+        const requirement = text(body.requirement).trim()
+        const projectDir = text(body.projectDir).trim()
+        const title = text(body.title).trim()
         if (!sessionId) throw userError('请选择已有 DSH 对话')
         if (!question) throw userError('缺少 Claude 的首问')
         if (!answer) throw userError('请先回答 Claude 的首问')
-        return sendFirstQuestionToSession(sessionId, question, answer, brief)
+        return sendFirstQuestionToSession(
+          sessionId,
+          question,
+          answer,
+          brief,
+          requirement,
+          projectDir,
+          title,
+        )
       }),
     },
     {
@@ -1891,7 +2004,7 @@ export function apply(ctx, config = {}) {
             `${JSON.stringify(acceptanceSettings, null, 2)}\n`,
             'utf8',
           )
-          acceptance.setAuto(acceptanceSettings.autoAcceptance)
+          acceptance.setAuto(legacyGate && acceptanceSettings.autoAcceptance)
         }
         return json(acceptanceSettings)
       }),

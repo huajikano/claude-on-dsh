@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { runCheckers } from '../../lib/acceptance/checkers.js'
 import { judgeAcceptance, validateJudgeOutput } from '../../lib/acceptance/judge.js'
-import { evidenceBackedOverall } from '../../lib/acceptance/kernel.js'
+import { evidenceBackedOverall, executeAcceptance } from '../../lib/acceptance/kernel.js'
 import { renderMarkdown, writeReports } from '../../lib/acceptance/report.js'
 import { sampleFacts, sampleReport, workspace } from './fixtures.js'
 
@@ -86,11 +87,60 @@ test('judge maps its own timeout to status timeout', async () => {
   assert.equal(result.status, 'timeout')
 })
 
+test('judge does not retry a timed-out CLI run', async () => {
+  const facts = sampleFacts()
+  const { checks, evidence } = runCheckers(facts, { allowedPaths: [] })
+  let calls = 0
+  const result = await judgeAcceptance({
+    facts,
+    checks,
+    evidence,
+    runJudge: async () => {
+      calls += 1
+      throw Object.assign(new Error('Claude 调用超时'), { status: 504 })
+    },
+    options: { judgeRetries: 2 },
+  })
+  assert.equal(calls, 1)
+  assert.equal(result.status, 'timeout')
+})
+
 test('a pass is downgraded when facts are missing or a check is uncertain', () => {
   assert.equal(evidenceBackedOverall('pass', [{ conclusion: 'pass' }], []), 'pass')
   assert.equal(evidenceBackedOverall('pass', [{ conclusion: 'pass' }], ['git-state-unavailable']), 'uncertain')
   assert.equal(evidenceBackedOverall('pass', [{ conclusion: 'uncertain' }], []), 'uncertain')
   assert.equal(evidenceBackedOverall('fail', [{ conclusion: 'fail' }], ['x']), 'fail')
+})
+
+test('a clean worktree produces a valid report, not the assembly fallback', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'cod-clean-report-'))
+  try {
+    execFileSync('git', ['-C', dir, 'init', '-q'])
+    execFileSync('git', ['-C', dir, '-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '--allow-empty', '-qm', 'init'])
+    const events = [
+      { type: 'user/message', seq: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '实现登录功能并运行测试' }] } },
+      { type: 'assistant/message', seq: 2, data: { message: { role: 'assistant', content: [{ type: 'text', text: '已完成登录功能。' }] } } },
+      { type: 'turn/end', seq: 3, data: { turn: 1, reason: { kind: 'completed' } } },
+    ]
+    const result = await executeAcceptance({
+      sessionId: 'session-clean',
+      meta: { cwd: dir },
+      events,
+      workspace: dir,
+      gatePolicy: 'manual',
+      runJudge: async () => {
+        throw new Error('judge disabled in test')
+      },
+      options: { judge: false },
+    })
+    assert.equal(result.report.status, 'completed')
+    assert.ok(!result.report.missing.includes('report-assembly-failed'))
+    const scope = result.report.checks.find((check) => check.id === 'scope')
+    assert.equal(scope.conclusion, 'pass')
+    assert.equal(scope.evidence.length, 1)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('markdown exposes verdict and locatable evidence', () => {

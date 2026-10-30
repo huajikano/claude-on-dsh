@@ -55,8 +55,9 @@
 2. 填写这次的新要求；
 3. Claude 读取该对话的历史、任务、改动文件和 git 状态；
 4. Claude 生成一条带上下文的首问，**直接发回这个已有对话**，不会新建会话。
+5. 这次发送同时写入派发记录，之后可以在验收列表里找到这个会话和它的报告。
 
-只有点「发送首问」才会消耗额度；Claude 无法调用时会退化为把你的新要求作为首问发回。
+只有点「发送首问」才会消耗额度；Claude 不可用或生成失败时会返回错误并保留你的要求，不会静默发出空首问。
 
 ## 本机集成
 
@@ -96,7 +97,7 @@
 
 - 规划阶段默认使用 `plan`（只读）权限模式；插件不会让 Claude 修改项目文件。
 - 派发使用 DSH 的 API Session Controller，任务书进入正常会话日志，可审计、可中断。
-- `bypassPermissions` 仅在你自己显式配置时生效，面板不提供该选项。
+- `bypassPermissions` 仅在你自己显式配置时生效，面板不提供该选项；浏览器请求的权限模式被限制在 `plan` / `dontAsk` / `acceptEdits`。
 - 插件不读取、不写入任何 API key；认证由 Claude Code / CC Switch 的原生配置负责。
 
 ## 两种使用方式
@@ -104,13 +105,13 @@
 1. **派发给 DSH**：Claude 提问 → 你回答 → DSH 执行整案。这个入口**不会**打开 Claude 终端。
 2. **Claude 直接验收**：在面板「Claude 直接验收（终端可见）」卡片里选项目目录，点击后打开一个真实的 Claude Code 终端，由 Claude 检查改动、运行测试、把报告写到 `.dsh/acceptance/visible-*.md`。整个过程在终端里可见，不经过 DSH 的隐藏验收。
 
-自动验收默认 **off**；只有显式把 `acceptance.gatePolicy` 设为 `ask`/`auto` 才会在 DSH turn 结束后跑隐藏验收。
+自动验收默认 **off**；只有同时设置 `acceptance.legacyGate: true` 与 `gatePolicy: ask|auto`，才会在 DSH turn 结束后跑隐藏验收。面板上的「立即验收 / 跳过验收」与 `/acceptance run` 属于手动入口，在 lean 模式下始终可用。
 
 ## 自动验收（Acceptance Gate，1.0.1+）
 
 派发的会话结束后，插件会自动按会话原始事实生成验收报告，而不是采信 DSH 的自我汇报。
 
-### 触发
+### 触发（`legacyGate: true` 时）
 
 - 插件在 dispatch 时 `arm` 会话；
 - 监听 `agent/status` 的 `running → idle`（延迟 150ms 落盘）触发一次；
@@ -119,10 +120,10 @@
 
 ### 策略
 
-| `gatePolicy` | 行为 |
+| `gatePolicy` | 行为（仅在 `legacyGate: true` 时生效） |
 |---|---|
 | `off` | 不调用 Claude，不落盘 |
-| `ask`（默认） | 在会话内向用户询问「验收 / 跳过」；拒绝或超时无报告，不影响会话结束 |
+| `ask` | 在会话内向用户询问「验收 / 跳过」；拒绝或超时无报告，不影响会话结束 |
 | `auto` | 直接验收 |
 
 ### 报告
@@ -154,7 +155,8 @@
 - id: claude-on-dsh
   config:
     acceptance:
-      gatePolicy: off          # off | ask | auto（默认 off；直接验收用上面的可见终端）
+      legacyGate: false        # true 才启用 turn 结束后的自动验收
+      gatePolicy: off          # off | ask | auto（仅 legacyGate: true 时生效）
       timeoutMs: 180000        # 单次验收总预算
       askTimeoutMs: 120000     # ask 等待用户回答的上限
       judgeTimeoutMs: 180000   # Claude 判定上限
@@ -175,7 +177,7 @@
 
 - Host 半：Node ESM，无第三方依赖；`/api/claude-on-dsh/*` 路由负责探测、运行 CLI、派发、历史与桌面启动。
 - Client 半：`window.__ModuleLoader__` 工厂，注册 `sidebar.panellist` 图标与 `main` 面板。
-- 验收内核：`lib/acceptance/`，`npm test` 运行 25 个 node:test 用例（契约、取证、检查器、判定、报告、三态策略、dispatch 回归）。
+- 验收内核：`lib/acceptance/`，`npm test` 运行 41 个 node:test 用例（契约、取证、检查器、判定、报告、三态策略、路由、客户端渲染与超时、权限边界、dispatch 回归）。
 - 已实测：Claude CLI 探测（2.1.295）、真实首问与定稿两次结构化调用、Host 路由离线 harness、DSH 侧栏与主面板注册。
 - 未实测：浏览器内的面板视觉渲染与「点击派发」全链路（开发会话没有浏览器控制能力）；首次使用请刷新一次页面。
 

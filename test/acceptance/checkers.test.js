@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { mkdtemp, rm } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
-import { buildFacts, extractCommands, extractFileOps, extractTask } from '../../lib/acceptance/facts.js'
+import { buildFacts, extractCommands, extractFileOps, extractTask, readGit } from '../../lib/acceptance/facts.js'
 import { goalChecker, runCheckers, scopeChecker, verificationChecker } from '../../lib/acceptance/checkers.js'
 import { createEvidenceBag } from '../../lib/acceptance/checkers.js'
 import { sampleEvents, sampleFacts, workspace } from './fixtures.js'
@@ -28,8 +32,8 @@ test('extractFileOps keeps write/edit paths', () => {
   assert.deepEqual(ops.map((op) => op.path), ['src/login.js'])
 })
 
-test('buildFacts normalizes task, commands, file ops, and missing facts', () => {
-  const facts = buildFacts({ sessionId: 'session-test', meta: { cwd: workspace }, events: sampleEvents(), workspace })
+test('buildFacts normalizes task, commands, file ops, and missing facts', async () => {
+  const facts = await buildFacts({ sessionId: 'session-test', meta: { cwd: workspace }, events: sampleEvents(), workspace })
   assert.equal(facts.task.sourceSeq, 1)
   assert.equal(facts.commands.length, 1)
   assert.equal(facts.changedFiles.length, 1)
@@ -94,6 +98,47 @@ test('scope checker covers pass, fail, and uncertain', () => {
   assert.equal(scopeChecker.run(clean, {}, createEvidenceBag()).conclusion, 'pass')
   const noGit = sampleFacts({ changedFiles: [], git: { available: false, files: [], statusOutput: '', error: 'no git' } })
   assert.equal(scopeChecker.run(noGit, {}, createEvidenceBag()).conclusion, 'uncertain')
+})
+
+test('scope checker keeps a clean worktree as evidenced pass', () => {
+  const clean = sampleFacts({
+    changedFiles: [],
+    git: { available: true, hasHead: true, head: 'abc123', files: [], statusOutput: '', error: '' },
+  })
+  const check = scopeChecker.run(clean, {}, createEvidenceBag())
+  assert.equal(check.conclusion, 'pass')
+  assert.equal(check.evidence.length, 1)
+  assert.match(check.evidence[0].excerpt, /clean worktree/)
+})
+
+test('readGit keeps a repository with no commits available', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'cod-unborn-'))
+  try {
+    execFileSync('git', ['-C', dir, 'init', '-q'])
+    const git = await readGit(dir)
+    assert.equal(git.available, true)
+    assert.equal(git.hasHead, false)
+    assert.equal(git.head, '')
+    assert.equal(git.error, '')
+    const facts = await buildFacts({ sessionId: 'session-unborn', meta: { cwd: dir }, events: sampleEvents(), workspace: dir })
+    assert.ok(!facts.missing.includes('git-state-unavailable'))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('readGit distinguishes a clean committed worktree from an unavailable one', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'cod-clean-git-'))
+  try {
+    execFileSync('git', ['-C', dir, 'init', '-q'])
+    execFileSync('git', ['-C', dir, '-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '--allow-empty', '-qm', 'init'])
+    const git = await readGit(dir)
+    assert.equal(git.available, true)
+    assert.equal(git.hasHead, true)
+    assert.equal(git.statusOutput, '')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('runCheckers returns three checks with unique evidence ids', () => {

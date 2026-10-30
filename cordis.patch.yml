@@ -13,7 +13,8 @@
 #   permissionPreset danger-full-access (full access) or another configured preset
 #   model           optional model override passed to the Claude Code CLI
 #   timeoutMs       per-call timeout for the CLI (default 240000)
-#   acceptance      gatePolicy: off|ask|auto (default ask), timeoutMs,
+#   acceptance      legacyGate: false (auto gate is opt-in), gatePolicy: off|ask|auto
+#                   (only effective with legacyGate: true), timeoutMs,
 #                   askTimeoutMs, judgeRetries, reportDir, allowedPaths
 
 - insert:
@@ -24,7 +25,7 @@
         timeoutMs: 240000
         acceptance:
           legacyGate: false
-          gatePolicy: ask
+          gatePolicy: off
           timeoutMs: 180000
           askTimeoutMs: 120000
           judgeRetries: 2

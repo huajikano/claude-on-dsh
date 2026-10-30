@@ -3,7 +3,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react')
     const h = React.createElement
-    const { useCallback, useEffect, useMemo, useState } = React
+    const { useCallback, useEffect, useMemo, useRef, useState } = React
 
     /** Dictionary namespace owned by this plugin. */
     const NS = 'claude-on-dsh'
@@ -49,9 +49,9 @@ window.__ModuleLoader__.load({
         statusProxy: 'CC Switch 代理',
         statusCcSwitch: 'CC Switch',
         understand: 'Claude 的理解',
-        firstQuestion: 'Claude 的首问',
+        openingQuestion: 'Claude 的首问',
         planOutline: '初步计划',
-        acceptance: '验收标准',
+        acceptanceCriteria: '验收标准',
         risks: '风险',
         answer: '你的回答',
         answerPlaceholder: '回答上面这个问题，或直接点选候选答案。',
@@ -65,7 +65,7 @@ window.__ModuleLoader__.load({
         fullAccess: '完全权限（danger-full-access）',
         permissionFallback: '完全权限切换失败，已退回仅关闭审批',
         acceptance: 'Claude 验收',
-        acceptanceHint: '派发任务结束后自动触发；这里显示 Claude 的验收进度、结论与证据。',
+        acceptanceHint: '显示本次任务的验收进度、结论与证据；自动触发需要开启 legacyGate，手动验收随时可用。',
         acceptanceState: '状态',
         acceptanceRun: '立即验收',
         acceptanceSkip: '跳过验收',
@@ -80,8 +80,7 @@ window.__ModuleLoader__.load({
         reviewPath: '报告将写入',
         acceptanceSection: 'Claude 验收（可选，展开查看）',
         acceptanceShow: '显示验收',
-        autoAcceptanceToggle: '自动验收（1.0.1 风格）',
-        manualAcceptanceToggle: '验收面板',
+        autoAcceptanceToggle: '自动验收（legacyGate）',
         dshAccept: '交给 DSH 验收',
         acceptanceCostWarn: '验收会消耗额度；只有点「开始验收」才会执行。',
         acceptanceModeClaude: 'Claude 直接验收',
@@ -106,9 +105,6 @@ window.__ModuleLoader__.load({
         firstQuestionAnswerRequired: '请先回答 Claude 的首问',
         firstQuestionSendToDsh: '发送给 DSH',
         firstQuestionBusy: '正在读取对话并生成首问…',
-        existingSection: '在所有 DSH 对话中提问（可选，展开）',
-        existingTitle: '在所有 DSH 对话中提问',
-        existingHint: 'DSH 工作区的全部对话都可以选；Claude 会先读该对话与项目，再把首问发回原会话。',
         existingPick: '选择一个已有对话…',
         dshAcceptOpened: '已把验收任务发回原 DSH 会话',
         reviewPickSession: '请先选择验收对象（该项目的首问会话）',
@@ -206,9 +202,9 @@ window.__ModuleLoader__.load({
         statusProxy: 'CC Switch proxy',
         statusCcSwitch: 'CC Switch',
         understand: "Claude's understanding",
-        firstQuestion: "Claude's opening question",
+        openingQuestion: "Claude's opening question",
         planOutline: 'Draft plan',
-        acceptance: 'Acceptance criteria',
+        acceptanceCriteria: 'Acceptance criteria',
         risks: 'Risks',
         answer: 'Your answer',
         answerPlaceholder: 'Answer the question, or pick one of the options.',
@@ -222,7 +218,7 @@ window.__ModuleLoader__.load({
         fullAccess: 'Full access (danger-full-access)',
         permissionFallback: 'Could not switch to full access; approvals were disabled only',
         acceptance: 'Claude acceptance',
-        acceptanceHint: 'Runs after the dispatched task turn; progress, verdict, and evidence appear here.',
+        acceptanceHint: 'Shows this task\'s acceptance progress, verdict, and evidence. Automatic runs need legacyGate; manual runs are always available.',
         acceptanceState: 'State',
         acceptanceRun: 'Run acceptance',
         acceptanceSkip: 'Skip acceptance',
@@ -237,8 +233,7 @@ window.__ModuleLoader__.load({
         reviewPath: 'Report will be written to',
         acceptanceSection: 'Claude acceptance (optional; expand)',
         acceptanceShow: 'Show acceptance',
-        autoAcceptanceToggle: 'Auto acceptance (1.0.1 style)',
-        manualAcceptanceToggle: 'Acceptance panel',
+        autoAcceptanceToggle: 'Auto acceptance (legacyGate)',
         dshAccept: 'Hand off to DSH for acceptance',
         acceptanceCostWarn: 'Acceptance spends credits; it starts only when you click Start.',
         acceptanceModeClaude: 'Claude reviews directly',
@@ -263,9 +258,6 @@ window.__ModuleLoader__.load({
         firstQuestionAnswerRequired: 'Answer the first question first',
         firstQuestionSendToDsh: 'Send to DSH',
         firstQuestionBusy: 'Reading the conversation and drafting the first question…',
-        existingSection: 'Ask in any DSH conversation (optional; expand)',
-        existingTitle: 'Ask in any DSH conversation',
-        existingHint: 'Every conversation in the DSH workspace is selectable; Claude reads it and the project, then posts its first question back.',
         existingPick: 'Choose an existing conversation…',
         dshAcceptOpened: 'Acceptance task sent back to the original DSH session',
         reviewPickSession: 'Choose the original first-question session first',
@@ -336,13 +328,37 @@ window.__ModuleLoader__.load({
     /* transport                                                           */
     /* ------------------------------------------------------------------ */
 
-    async function request(pathname, options) {
+    const DEFAULT_REQUEST_TIMEOUT_MS = 20_000
+
+    function timeoutSignal(ms) {
+      if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+        return AbortSignal.timeout(ms)
+      }
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), ms)
+      if (timer && typeof timer.unref === 'function') timer.unref()
+      return controller.signal
+    }
+
+    async function request(pathname, options = {}) {
+      const { timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, signal, ...fetchOptions } = options || {}
       const url = new URL(`${API}${pathname}`, window.location.origin)
-      const response = await fetch(url, {
-        credentials: 'include',
-        headers: { 'content-type': 'application/json' },
-        ...options,
-      })
+      let response
+      try {
+        response = await fetch(url, {
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+          signal: signal || timeoutSignal(timeoutMs),
+          ...fetchOptions,
+        })
+      } catch (error) {
+        if (error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+          const timeout = new Error(`请求超时（${Math.round(timeoutMs / 1000)} 秒）`)
+          timeout.hint = 'Host 可能仍在处理；稍后刷新状态或重试。'
+          throw timeout
+        }
+        throw error
+      }
       const raw = await response.text()
       let data = null
       try {
@@ -516,6 +532,48 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function Modal({ title, onClose, children }) {
+      const box = useRef(null)
+      const closeRef = useRef(onClose)
+      closeRef.current = onClose
+      useEffect(() => {
+        const previous = document.activeElement
+        const onKeyDown = (event) => {
+          if (event.key === 'Escape') {
+            event.stopPropagation()
+            closeRef.current()
+          }
+        }
+        document.addEventListener('keydown', onKeyDown)
+        try {
+          box.current?.focus()
+        } catch {}
+        return () => {
+          document.removeEventListener('keydown', onKeyDown)
+          try {
+            previous && typeof previous.focus === 'function' && previous.focus()
+          } catch {}
+        }
+      }, [])
+      return h(
+        'div',
+        { className: 'cc-modalBackdrop', onClick: () => closeRef.current() },
+        h(
+          'div',
+          {
+            className: 'cc-modal',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': title,
+            tabIndex: -1,
+            ref: box,
+            onClick: (event) => event.stopPropagation(),
+          },
+          children,
+        ),
+      )
+    }
+
     /* ------------------------------------------------------------------ */
     /* panel                                                               */
     /* ------------------------------------------------------------------ */
@@ -613,15 +671,13 @@ window.__ModuleLoader__.load({
       const [acceptanceList, setAcceptanceList] = useState([])
       const [acceptanceError, setAcceptanceError] = useState('')
       const [acceptanceBusy, setAcceptanceBusy] = useState(false)
-      const [acceptanceHidden, setAcceptanceHidden] = useState(false)
-      const [settings, setSettings] = useState({ autoAcceptance: true, manualAcceptance: true })
+      const [settings, setSettings] = useState({ autoAcceptance: true })
       const [reviewPath, setReviewPath] = useState('')
       const [reviewBusy, setReviewBusy] = useState(false)
       const [reviewSession, setReviewSession] = useState('')
       const [dialog, setDialog] = useState(null)
       const [firstQuestion, setFirstQuestion] = useState(null)
       const [allSessions, setAllSessions] = useState([])
-      const [existingSession, setExistingSession] = useState('')
 
       const update = useCallback((patch) => {
         setForm((current) => ({ ...current, ...patch }))
@@ -808,7 +864,6 @@ window.__ModuleLoader__.load({
         }
         try {
           await skipAcceptance(sessionId)
-          setAcceptanceHidden(true)
           setAcceptance((current) =>
             current && current.sessionId === sessionId
               ? { ...current, state: { ...(current.state || {}), state: 'skipped', phase: tt('acceptanceSkipped') } }
@@ -896,7 +951,8 @@ window.__ModuleLoader__.load({
 
       const cliReady = Boolean(detect && detect.cli && detect.cli.found && detect.cli.runnable)
       const desktopReady = Boolean(detect && detect.desktop && detect.desktop.found)
-      const proxyReady = Boolean(detect && detect.proxy && detect.proxy.reachable)
+      const proxyApplicable = Boolean(detect && detect.proxy && detect.proxy.applicable)
+      const proxyReady = Boolean(proxyApplicable && detect.proxy.reachable)
       const ccSwitchReady = Boolean(detect && detect.ccSwitch && detect.ccSwitch.found)
       const running = Boolean(job && job.state === 'running')
       const elapsed = job ? Math.max(0, Math.round(((job.finishedAt || Date.now()) - job.startedAt) / 1000)) : 0
@@ -1007,7 +1063,6 @@ window.__ModuleLoader__.load({
             permissionWarning: data.permissionWarning,
           })
           setPhase('dispatched')
-          setAcceptanceHidden(false)
           if (data.record) {
             setHistory((current) => [data.record].concat(current).slice(0, 24))
           }
@@ -1050,6 +1105,7 @@ window.__ModuleLoader__.load({
           const opened = await request('/desktop', {
             method: 'POST',
             body: JSON.stringify({ brief: prompt, launch: desktopReady }),
+            timeoutMs: 40_000,
           })
           setPhase('desktop')
           if (!desktopReady) {
@@ -1069,6 +1125,7 @@ window.__ModuleLoader__.load({
           const data = await request('/desktop', {
             method: 'POST',
             body: JSON.stringify({ brief: value, launch: Boolean(launch) }),
+            timeoutMs: 40_000,
           })
           if (data && data.copied) setToast(tt('copied'))
           else fail(tt('copyFailed'))
@@ -1105,8 +1162,12 @@ window.__ModuleLoader__.load({
       }
 
       function openCurrentFirstQuestion() {
-        const target =
-          currentSessionId || (allSessions[0] && allSessions[0].sessionId) || ''
+        let current = ''
+        try {
+          current =
+            typeof currentSessionId === 'function' ? currentSessionId() : currentSessionId || ''
+        } catch {}
+        const target = current || (allSessions[0] && allSessions[0].sessionId) || ''
         const item = allSessions.find((session) => session.sessionId === target)
         openFirstQuestionDialog({
           sessionId: target,
@@ -1128,6 +1189,21 @@ window.__ModuleLoader__.load({
           generated: null,
           answer: '',
         })
+        // The picker should offer the conversations that exist now, not the
+        // snapshot taken when the panel first mounted.
+        listSessions()
+          .then((data) => setAllSessions(Array.isArray(data && data.items) ? data.items : []))
+          .catch(() => {})
+      }
+
+      function closeFirstQuestion() {
+        if (firstQuestion && firstQuestion.busy) return
+        setFirstQuestion(null)
+      }
+
+      function closeDialog() {
+        if (dialog && dialog.busy) return
+        setDialog(null)
       }
 
       async function sendFirstQuestionNow() {
@@ -1174,6 +1250,9 @@ window.__ModuleLoader__.load({
         try {
           const data = await sendFirstQuestion({
             sessionId: firstQuestion.entry.sessionId,
+            requirement: firstQuestion.requirement,
+            projectDir: firstQuestion.entry.projectDir,
+            title: firstQuestion.entry.title,
             question: firstQuestion.generated.question,
             answer: firstQuestion.answer,
             brief: firstQuestion.generated.brief,
@@ -1273,7 +1352,6 @@ window.__ModuleLoader__.load({
         setPhase('setup')
         setNotice(null)
         setConsumedJobId(null)
-        setAcceptanceHidden(false)
       }
 
       /* ---------------------------------------------------------------- */
@@ -1406,7 +1484,7 @@ window.__ModuleLoader__.load({
               detect && detect.cli && detect.cli.path ? h('code', null, detect.cli.path) : null,
             )
           : null,
-        detect && !detect.proxy.reachable && form.engine === 'cli'
+        detect && detect.proxy && detect.proxy.applicable && !detect.proxy.reachable && form.engine === 'cli'
           ? h('div', { className: 'cc-inlineWarn' }, h('span', null, tt('proxyHint')))
           : null,
         h(
@@ -1533,7 +1611,7 @@ window.__ModuleLoader__.load({
                 ),
                 h(
                   Section,
-                  { title: tt('firstQuestion') },
+                  { title: tt('openingQuestion') },
                   h('div', { className: 'cc-question' }, brief.firstQuestion || ''),
                   Array.isArray(brief.questionOptions) && brief.questionOptions.length > 0
                     ? h(
@@ -1663,7 +1741,7 @@ window.__ModuleLoader__.load({
             Array.isArray(refined.acceptance) && refined.acceptance.length > 0
               ? h(
                   Section,
-                  { title: tt('acceptance') },
+                  { title: tt('acceptanceCriteria') },
                   h(
                     'ul',
                     { className: 'cc-ul' },
@@ -1732,6 +1810,27 @@ window.__ModuleLoader__.load({
 
       const acceptanceReport = acceptance && acceptance.report ? acceptance.report : null
       const acceptanceState = acceptance && acceptance.state ? acceptance.state : null
+      const legacyGateEnabled = Boolean(detect && detect.config && detect.config.legacyGate)
+      const autoToggle = legacyGateEnabled
+        ? h(
+            'div',
+            { className: 'cc-accToggles' },
+            h(
+              'label',
+              { className: 'cc-switch' },
+              h('input', {
+                type: 'checkbox',
+                checked: Boolean(settings.autoAcceptance),
+                onChange: (event) => {
+                  const value = event.target.checked
+                  setSettings((current) => ({ ...current, autoAcceptance: value }))
+                  saveSettings({ autoAcceptance: value })
+                },
+              }),
+              tt('autoAcceptanceToggle'),
+            ),
+          )
+        : null
       const acceptanceCard = h(
         'div',
         { className: 'cc-card cc-acceptance' },
@@ -1754,6 +1853,7 @@ window.__ModuleLoader__.load({
           ),
         ),
         h('div', { className: 'cc-hint' }, tt('acceptanceHint')),
+        autoToggle,
         acceptanceError ? h(Notice, { notice: { message: acceptanceError }, tt }) : null,
         !acceptance ? h('div', { className: 'cc-hint' }, tt('acceptanceNoSession')) : null,
         acceptance
@@ -1968,45 +2068,43 @@ window.__ModuleLoader__.load({
           : null,
       )
 
-      const acceptanceSection = h(
+      // Kept collapsed outside the dispatched focus, so the panel stays calm
+      // while the acceptance tools remain one click away.
+      const acceptancePreview = h(
         'details',
         { className: 'cc-accDetails' },
         h('summary', null, tt('acceptanceSection')),
-        h(
-          'div',
-          { className: 'cc-accToggles' },
-          h(
-            'label',
-            { className: 'cc-switch' },
-            h('input', {
-              type: 'checkbox',
-              checked: Boolean(settings.autoAcceptance),
-              onChange: (event) => {
-                const value = event.target.checked
-                setSettings((current) => ({ ...current, autoAcceptance: value }))
-                saveSettings({ autoAcceptance: value })
-              },
-            }),
-            tt('autoAcceptanceToggle'),
-          ),
-          h(
-            'label',
-            { className: 'cc-switch' },
-            h('input', {
-              type: 'checkbox',
-              checked: Boolean(settings.manualAcceptance),
-              onChange: (event) => {
-                const value = event.target.checked
-                setSettings((current) => ({ ...current, manualAcceptance: value }))
-                saveSettings({ manualAcceptance: value })
-              },
-            }),
-            tt('manualAcceptanceToggle'),
-          ),
-        ),
         acceptanceCard,
         reviewCard,
       )
+
+      const reviewDetails = h(
+        'details',
+        { className: 'cc-accDetails' },
+        h('summary', null, tt('reviewTitle')),
+        reviewCard,
+      )
+
+      // Phase-focused layout: the handoff card and the dispatch result own the
+      // top of the panel, while the already-used setup form folds away.
+      let main
+      if (phase === 'dispatched') {
+        main = h(React.Fragment, null, rightCard, acceptanceCard, reviewDetails)
+      } else if (phase === 'refined') {
+        main = h(
+          React.Fragment,
+          null,
+          refinedCard,
+          h(
+            'details',
+            { className: 'cc-accDetails' },
+            h('summary', null, tt('stepSetup')),
+            leftCard,
+          ),
+        )
+      } else {
+        main = h('div', { className: 'cc-grid' }, leftCard, rightCard)
+      }
 
       return h(
         'div',
@@ -2031,14 +2129,14 @@ window.__ModuleLoader__.load({
                 : tt('statusCli'),
             }),
             h(Chip, { on: desktopReady, label: tt('statusDesktop') }),
-            h(Chip, { on: proxyReady, warn: detect ? !proxyReady : false, label: tt('statusProxy') }),
+            proxyApplicable ? h(Chip, { on: proxyReady, warn: !proxyReady, label: tt('statusProxy') }) : null,
             h(Chip, { on: ccSwitchReady, label: tt('statusCcSwitch') }),
           ),
         ),
         h(
           'div',
           { className: 'cc-quickActions' },
-          h(Button, { variant: 'primary', onClick: openCurrentFirstQuestion }, tt('chooseSession')),
+          h(Button, { variant: 'ghost', onClick: openCurrentFirstQuestion }, tt('chooseSession')),
         ),
         h(
           'div',
@@ -2060,60 +2158,8 @@ window.__ModuleLoader__.load({
           ),
         ),
         notice ? h(Notice, { notice, tt }) : null,
-        h('div', { className: 'cc-grid' }, leftCard, rightCard),
-        refinedCard,
-        null &&
-        h(
-          'details',
-          { className: 'cc-accDetails' },
-          h('summary', null, tt('existingSection')),
-          h(
-            'div',
-            { className: 'cc-card cc-existing' },
-            h('div', { className: 'cc-cardTitle' }, tt('existingTitle')),
-          h('div', { className: 'cc-hint' }, tt('existingHint')),
-          h(
-            'select',
-            {
-              className: 'cc-select',
-              value: existingSession,
-              onChange: (event) => setExistingSession(event.target.value),
-            },
-            h('option', { value: '' }, tt('existingPick')),
-            allSessions.map((item) =>
-              h(
-                'option',
-                { value: item.sessionId, key: item.sessionId },
-                `${(item.cwd || '').split(/[\\/]/).filter(Boolean).pop() || item.cwd} · ${item.sessionId.slice(-8)} · ${timeText(item.updatedAt)}`,
-              ),
-            ),
-          ),
-          h(
-            'div',
-            { className: 'cc-actions' },
-            h(
-              Button,
-              {
-                variant: 'primary',
-                disabled: !existingSession,
-                onClick: () => {
-                  const selected = allSessions.find(
-                    (item) => item.sessionId === existingSession,
-                  )
-                  if (!selected) return
-                  openFirstQuestionDialog({
-                    sessionId: selected.sessionId,
-                    projectDir: selected.cwd,
-                    title:
-                      (selected.cwd || '').split(/[\\/]/).filter(Boolean).pop() || selected.cwd,
-                  })
-                },
-              },
-              tt('firstQuestion'),
-            ),
-          ),
-          ),
-        ),
+        main,
+        phase === 'dispatched' ? null : acceptancePreview,
         h(
           'div',
           { className: 'cc-history' },
@@ -2167,18 +2213,18 @@ window.__ModuleLoader__.load({
         ),
         firstQuestion
           ? h(
-              'div',
-              { className: 'cc-modalBackdrop', onClick: () => setFirstQuestion(null) },
-              h(
-                'div',
-                { className: 'cc-modal', onClick: (event) => event.stopPropagation() },
+              Modal,
+              {
+                title: `${tt('firstQuestion')}：${firstQuestion.entry.title || firstQuestion.entry.sessionId}`,
+                onClose: closeFirstQuestion,
+              },
                 h(
                   'button',
                   {
                     type: 'button',
                     className: 'cc-modalClose',
                     'aria-label': 'Close',
-                    onClick: () => setFirstQuestion(null),
+                    onClick: closeFirstQuestion,
                   },
                   '×',
                 ),
@@ -2320,27 +2366,26 @@ window.__ModuleLoader__.load({
                   ),
                   h(
                     Button,
-                    { variant: 'link', onClick: () => setFirstQuestion(null) },
+                    { variant: 'link', onClick: closeFirstQuestion },
                     tt('acceptanceCancel'),
                   ),
                 ),
-              ),
             )
           : null,
         dialog
           ? h(
-              'div',
-              { className: 'cc-modalBackdrop', onClick: () => setDialog(null) },
-              h(
-                'div',
-                { className: 'cc-modal', onClick: (event) => event.stopPropagation() },
+              Modal,
+              {
+                title: `${tt('acceptance')}：${dialog.entry.title || dialog.entry.sessionId}`,
+                onClose: closeDialog,
+              },
                 h(
                   'button',
                   {
                     type: 'button',
                     className: 'cc-modalClose',
                     'aria-label': 'Close',
-                    onClick: () => setDialog(null),
+                    onClick: closeDialog,
                   },
                   '×',
                 ),
@@ -2420,16 +2465,15 @@ window.__ModuleLoader__.load({
                   ),
                   h(
                     Button,
-                    { variant: 'ghost', onClick: () => setDialog(null) },
+                    { variant: 'ghost', onClick: closeDialog },
                     tt('acceptanceSkip'),
                   ),
                   h(
                     Button,
-                    { variant: 'link', onClick: () => setDialog(null) },
+                    { variant: 'link', onClick: closeDialog },
                     tt('acceptanceCancel'),
                   ),
                 ),
-              ),
             )
           : null,
         toast ? h('div', { className: 'cc-toast', role: 'status' }, toast) : null,
@@ -2471,51 +2515,59 @@ window.__ModuleLoader__.load({
           request('/dispatch', {
             method: 'POST',
             body: JSON.stringify(payload),
+            timeoutMs: 90_000,
           }),
         archiveTask: (sessionId) =>
           request('/archive', {
             method: 'POST',
             body: JSON.stringify({ sessionId }),
           }),
-        acceptanceStatus: (sessionId) => request(`/acceptance?id=${encodeURIComponent(sessionId)}`),
-        acceptanceList: () => request('/acceptance/list'),
+        acceptanceStatus: (sessionId) => request(`/acceptance?id=${encodeURIComponent(sessionId)}`, { timeoutMs: 30_000 }),
+        acceptanceList: () => request('/acceptance/list', { timeoutMs: 30_000 }),
         runAcceptance: (sessionId) =>
           request('/acceptance/run', {
             method: 'POST',
             body: JSON.stringify({ sessionId }),
+            timeoutMs: 30_000,
           }),
         skipAcceptance: (sessionId) =>
           request('/acceptance/skip', {
             method: 'POST',
             body: JSON.stringify({ sessionId }),
+            timeoutMs: 30_000,
           }),
         reviewTerminal: (payload) =>
           request('/acceptance/terminal', {
             method: 'POST',
             body: JSON.stringify(payload),
+            timeoutMs: 60_000,
           }),
         dispatchAcceptance: (payload) =>
           request('/acceptance/dispatch', {
             method: 'POST',
             body: JSON.stringify(payload),
+            timeoutMs: 180_000,
           }),
         runClaudeAcceptance: (payload) =>
           request('/acceptance/claude', {
             method: 'POST',
             body: JSON.stringify(payload),
+            timeoutMs: 600_000,
           }),
         askFirstQuestion: (payload) =>
           request('/session/first-question', {
             method: 'POST',
             body: JSON.stringify(payload),
+            timeoutMs: 150_000,
           }),
         sendFirstQuestion: (payload) =>
           request('/session/first-question/send', {
             method: 'POST',
             body: JSON.stringify(payload),
+            timeoutMs: 90_000,
           }),
         listSessions: () => request('/sessions'),
-        currentSessionId: (() => {
+        currentSessionId: () => {
           try {
             const scoped = ctx.sessions.scopeOf?.(ctx)
             if (scoped) return scoped
@@ -2527,7 +2579,7 @@ window.__ModuleLoader__.load({
             if (match) return match[1]
           } catch {}
           return ''
-        })(),
+        },
         getSettings: () => request('/settings'),
         saveSettings: (patch) =>
           request('/settings', {
@@ -2856,6 +2908,7 @@ window.__ModuleLoader__.load({
   border: 1px solid var(--dsw-alias-border-l2); border-radius: 16px;
   background: var(--dsw-alias-bg-overlay); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.14);
 }
+.cc-modal:focus { outline: none; }
 .cc-modalClose {
   position: absolute; inset-block-start: 10px; inset-inline-end: 12px;
   inline-size: 28px; block-size: 28px; display: grid; place-items: center;
