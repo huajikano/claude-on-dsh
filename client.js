@@ -92,6 +92,7 @@ window.__ModuleLoader__.load({
         acceptanceCancel: '取消',
         acceptanceDone: '验收完成',
         firstQuestion: '首问',
+        chooseSession: '选择会话',
         firstQuestionHint: 'Claude 会读取该对话与项目，然后把首问发回这个对话；点「发送首问」才会消耗额度。',
         firstQuestionRequirement: '新要求',
         firstQuestionPlaceholder: '例如：在现有流程上增加并行分支，保持旧数据不丢。',
@@ -248,6 +249,7 @@ window.__ModuleLoader__.load({
         acceptanceCancel: 'Cancel',
         acceptanceDone: 'Acceptance complete',
         firstQuestion: 'First question',
+        chooseSession: 'Choose conversation',
         firstQuestionHint: 'Claude reads this conversation and project, then posts its first question back here. Credits are spent only when you send.',
         firstQuestionRequirement: 'New requirement',
         firstQuestionPlaceholder: 'e.g. add parallel branches to the existing flow without losing old data.',
@@ -1117,9 +1119,9 @@ window.__ModuleLoader__.load({
       }
 
       function openFirstQuestionDialog(entry) {
-        if (!entry || !entry.sessionId) return
+        const target = entry || { sessionId: '', projectDir: '', title: '' }
         setFirstQuestion({
-          entry,
+          entry: target,
           requirement: '',
           busy: false,
           error: '',
@@ -2036,7 +2038,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'cc-quickActions' },
-          h(Button, { variant: 'primary', onClick: openCurrentFirstQuestion }, tt('firstQuestion')),
+          h(Button, { variant: 'primary', onClick: openCurrentFirstQuestion }, tt('chooseSession')),
         ),
         h(
           'div',
@@ -2170,6 +2172,16 @@ window.__ModuleLoader__.load({
               h(
                 'div',
                 { className: 'cc-modal', onClick: (event) => event.stopPropagation() },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'cc-modalClose',
+                    'aria-label': 'Close',
+                    onClick: () => setFirstQuestion(null),
+                  },
+                  '×',
+                ),
                 h(
                   'div',
                   { className: 'cc-cardTitle' },
@@ -2322,6 +2334,16 @@ window.__ModuleLoader__.load({
               h(
                 'div',
                 { className: 'cc-modal', onClick: (event) => event.stopPropagation() },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'cc-modalClose',
+                    'aria-label': 'Close',
+                    onClick: () => setDialog(null),
+                  },
+                  '×',
+                ),
                 h(
                   'div',
                   { className: 'cc-cardTitle' },
@@ -2563,18 +2585,26 @@ window.__ModuleLoader__.load({
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
   block-size: 100%;
   min-block-size: 0;
   overflow: auto;
-  padding: 26px clamp(20px, 4vw, 44px) 56px;
+  padding: 24px clamp(18px, 3.5vw, 40px) 64px;
   background: var(--dsw-alias-bg-base);
   color: var(--dsw-alias-label-primary);
   font-size: 13px;
   line-height: 1.55;
 }
 .cc-panel > * { inline-size: 100%; max-inline-size: 1120px; margin-inline: auto; }
-.cc-hero { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+.cc-hero {
+  display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap;
+  padding: 18px 20px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 16px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in oklab, #D97757 8%, var(--dsw-alias-bg-layer-1)),
+    var(--dsw-alias-bg-layer-1) 58%
+  );
+}
 .cc-mark {
   display: grid; place-items: center; flex: 0 0 auto;
   inline-size: 44px; block-size: 44px; border-radius: 13px;
@@ -2582,7 +2612,7 @@ window.__ModuleLoader__.load({
   border: 1px solid color-mix(in oklab, #D97757 34%, transparent);
 }
 .cc-heroText { min-inline-size: 0; flex: 1 1 320px; }
-.cc-heading { margin: 0; font-size: 20px; font-weight: 600; line-height: 1.25; letter-spacing: -0.01em; }
+.cc-heading { margin: 0; font-size: 21px; font-weight: 600; line-height: 1.25; letter-spacing: -0.02em; }
 .cc-subtitle { margin: 4px 0 0; color: var(--dsw-alias-label-secondary); font-size: 12.5px; }
 .cc-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; margin-inline-start: auto; }
 .cc-chip {
@@ -2614,8 +2644,9 @@ window.__ModuleLoader__.load({
 @media (max-width: 940px) { .cc-grid { grid-template-columns: 1fr; } }
 .cc-card {
   display: flex; flex-direction: column; gap: 14px; min-inline-size: 0;
-  padding: 16px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px;
+  padding: 16px 18px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 14px;
   background: var(--dsw-alias-bg-layer-1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 .cc-cardTitle { font-size: 13px; font-weight: 600; }
 .cc-field { display: flex; flex-direction: column; gap: 6px; min-inline-size: 0; }
@@ -2645,7 +2676,7 @@ window.__ModuleLoader__.load({
 .cc-actionsEnd { margin-block-start: 2px; }
 .cc-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  min-block-size: 32px; padding: 0 13px; border-radius: 8px; cursor: pointer;
+  min-block-size: 34px; padding: 0 13px; border-radius: 9px; cursor: pointer;
   font: inherit; font-size: 12.5px; font-weight: 500; border: 1px solid transparent;
 }
 .cc-btn:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -2807,6 +2838,7 @@ window.__ModuleLoader__.load({
   display: flex; align-items: center; gap: 10px; min-inline-size: 0;
   padding: 7px 10px; border-radius: 8px; border: 1px solid transparent;
 }
+.cc-historyList li { padding: 9px 12px; border-radius: 10px; }
 .cc-historyList li:hover { background: var(--dsw-alias-bg-layer-1); border-color: var(--dsw-alias-border-l1); }
 .cc-historyMain { display: flex; flex-direction: column; min-inline-size: 0; flex: 1 1 auto; }
 .cc-historyTitle { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2818,11 +2850,20 @@ window.__ModuleLoader__.load({
   background: transparent; padding: 24px;
 }
 .cc-modal {
-  inline-size: min(560px, 100%); max-block-size: 86vh; overflow: auto;
-  display: flex; flex-direction: column; gap: 12px; padding: 18px;
-  border: 1px solid var(--dsw-alias-border-l2); border-radius: 14px;
-  background: var(--dsw-alias-bg-overlay); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+  position: relative;
+  inline-size: min(600px, 100%); max-block-size: 86vh; overflow: auto;
+  display: flex; flex-direction: column; gap: 14px; padding: 22px;
+  border: 1px solid var(--dsw-alias-border-l2); border-radius: 16px;
+  background: var(--dsw-alias-bg-overlay); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.14);
 }
+.cc-modalClose {
+  position: absolute; inset-block-start: 10px; inset-inline-end: 12px;
+  inline-size: 28px; block-size: 28px; display: grid; place-items: center;
+  border: 1px solid transparent; border-radius: 8px; background: transparent;
+  color: var(--dsw-alias-label-secondary); font-size: 18px; line-height: 1; cursor: pointer;
+}
+.cc-modalClose:hover { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+.cc-modal .cc-cardTitle { padding-inline-end: 26px; }
 .cc-quickActions { display: flex; justify-content: flex-end; margin-block: -2px 10px; }
 .cc-select {
   inline-size: 100%; padding: 8px 10px; border-radius: 8px;
@@ -2831,6 +2872,7 @@ window.__ModuleLoader__.load({
   font-size: 12.5px;
 }
 .cc-existing { display: flex; flex-direction: column; gap: 10px; }
+.cc-toast {
   position: fixed; inset-block-end: 26px; inset-inline: 0; margin-inline: auto; z-index: 60;
   inline-size: fit-content; padding: 7px 14px; border-radius: 999px;
   background: var(--dsw-alias-bg-overlay); color: var(--dsw-alias-label-primary);
