@@ -98,6 +98,7 @@ window.__ModuleLoader__.load({
         firstQuestionSend: '发送首问',
         firstQuestionRequired: '请填写新要求',
         firstQuestionDone: '首问已发回该对话',
+        firstQuestionOther: '选择其他对话（可选）',
         firstQuestionBusy: '正在读取对话并生成首问…',
         existingSection: '在所有 DSH 对话中提问（可选，展开）',
         existingTitle: '在所有 DSH 对话中提问',
@@ -248,6 +249,7 @@ window.__ModuleLoader__.load({
         firstQuestionSend: 'Send first question',
         firstQuestionRequired: 'Enter a requirement',
         firstQuestionDone: 'First question sent to the conversation',
+        firstQuestionOther: 'Choose another conversation (optional)',
         firstQuestionBusy: 'Reading the conversation and drafting the first question…',
         existingSection: 'Ask in any DSH conversation (optional; expand)',
         existingTitle: 'Ask in any DSH conversation',
@@ -547,6 +549,7 @@ window.__ModuleLoader__.load({
         runClaudeAcceptance,
         askFirstQuestion,
         listSessions,
+        currentSessionId,
         getSettings,
         saveSettings,
       } = props
@@ -1088,6 +1091,20 @@ window.__ModuleLoader__.load({
         }
       }
 
+      function openCurrentFirstQuestion() {
+        const target =
+          currentSessionId || (allSessions[0] && allSessions[0].sessionId) || ''
+        const item = allSessions.find((session) => session.sessionId === target)
+        openFirstQuestionDialog({
+          sessionId: target,
+          projectDir: item && item.cwd,
+          title:
+            item && item.cwd
+              ? String(item.cwd).split(/[\\/]/).filter(Boolean).pop()
+              : target,
+        })
+      }
+
       function openFirstQuestionDialog(entry) {
         if (!entry || !entry.sessionId) return
         setFirstQuestion({ entry, requirement: '', busy: false, error: '' })
@@ -1095,6 +1112,12 @@ window.__ModuleLoader__.load({
 
       async function sendFirstQuestionNow() {
         if (!firstQuestion) return
+        if (!firstQuestion.entry.sessionId) {
+          setFirstQuestion((current) =>
+            current ? { ...current, error: tt('existingPick') } : current,
+          )
+          return
+        }
         if (!firstQuestion.requirement.trim()) {
           setFirstQuestion((current) =>
             current ? { ...current, error: tt('firstQuestionRequired') } : current,
@@ -1966,6 +1989,11 @@ window.__ModuleLoader__.load({
         ),
         h(
           'div',
+          { className: 'cc-quickActions' },
+          h(Button, { variant: 'primary', onClick: openCurrentFirstQuestion }, tt('firstQuestion')),
+        ),
+        h(
+          'div',
           { className: 'cc-steps' },
           steps.map((step, index) =>
             h(
@@ -1986,6 +2014,7 @@ window.__ModuleLoader__.load({
         notice ? h(Notice, { notice, tt }) : null,
         h('div', { className: 'cc-grid' }, leftCard, rightCard),
         refinedCard,
+        null &&
         h(
           'details',
           { className: 'cc-accDetails' },
@@ -2101,6 +2130,47 @@ window.__ModuleLoader__.load({
                   `${tt('firstQuestion')}：${firstQuestion.entry.title || firstQuestion.entry.sessionId}`,
                 ),
                 h('div', { className: 'cc-hint' }, tt('firstQuestionHint')),
+                h(
+                  'label',
+                  { className: 'cc-field' },
+                  h('span', { className: 'cc-label' }, tt('firstQuestionOther')),
+                  h(
+                    'select',
+                    {
+                      className: 'cc-select',
+                      value: firstQuestion.entry.sessionId || '',
+                      onChange: (event) => {
+                        const selected = allSessions.find(
+                          (item) => item.sessionId === event.target.value,
+                        )
+                        if (!selected) return
+                        setFirstQuestion((current) =>
+                          current
+                            ? {
+                                ...current,
+                                entry: {
+                                  sessionId: selected.sessionId,
+                                  projectDir: selected.cwd,
+                                  title: String(selected.cwd)
+                                    .split(/[\\/]/)
+                                    .filter(Boolean)
+                                    .pop(),
+                                },
+                              }
+                            : current,
+                        )
+                      },
+                    },
+                    h('option', { value: '' }, tt('existingPick')),
+                    allSessions.map((item) =>
+                      h(
+                        'option',
+                        { value: item.sessionId, key: item.sessionId },
+                        `${(item.cwd || '').split(/[\\/]/).filter(Boolean).pop() || item.cwd} · ${item.sessionId.slice(-8)}`,
+                      ),
+                    ),
+                  ),
+                ),
                 h(
                   'label',
                   { className: 'cc-field' },
@@ -2318,6 +2388,13 @@ window.__ModuleLoader__.load({
             body: JSON.stringify(payload),
           }),
         listSessions: () => request('/sessions'),
+        currentSessionId: (() => {
+          try {
+            return ctx.sessions.scopeOf?.(ctx) || ''
+          } catch {
+            return ''
+          }
+        })(),
         getSettings: () => request('/settings'),
         saveSettings: (patch) =>
           request('/settings', {
@@ -2635,6 +2712,7 @@ window.__ModuleLoader__.load({
   border: 1px solid var(--dsw-alias-border-l2); border-radius: 14px;
   background: var(--dsw-alias-bg-overlay); box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
 }
+.cc-quickActions { display: flex; justify-content: flex-end; margin-block: -2px 10px; }
 .cc-select {
   inline-size: 100%; padding: 8px 10px; border-radius: 8px;
   border: 1px solid var(--dsw-alias-border-l1);
