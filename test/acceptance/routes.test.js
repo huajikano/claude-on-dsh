@@ -213,7 +213,6 @@ test('configured model is reported by /detect', async () => {
     const result = await harness.invoke('GET', '/detect')
     assert.equal(result.status, 200)
     assert.equal(result.data.config.model, 'claude-sonnet-5-5')
-    assert.equal(result.data.config.legacyGate, false)
   })
 })
 

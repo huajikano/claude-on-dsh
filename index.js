@@ -1241,7 +1241,6 @@ export function apply(ctx, config = {}) {
         permissionMode: settings.permissionMode,
         model: settings.model,
         timeoutMs: settings.timeoutMs,
-        legacyGate,
       },
       now: Date.now(),
     }

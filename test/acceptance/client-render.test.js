@@ -91,19 +91,12 @@ const props = {
   openSession: () => {},
   dispatchTask: async () => ({}),
   archiveTask: async () => {},
-  acceptanceStatus: async () => ({}),
-  acceptanceList: async () => ({ items: [] }),
-  runAcceptance: async () => ({}),
-  skipAcceptance: async () => ({}),
-  reviewTerminal: async () => ({}),
   dispatchAcceptance: async () => ({}),
   runClaudeAcceptance: async () => ({}),
   askFirstQuestion: async () => ({}),
   sendFirstQuestion: async () => ({}),
   listSessions: async () => ({ items: [] }),
   currentSessionId: () => 'session-current',
-  getSettings: async () => ({ autoAcceptance: true }),
-  saveSettings: async () => ({}),
 }
 
 function contains(node, text) {
@@ -162,7 +155,7 @@ test('refined phase focuses on the handoff and folds the setup away', () => {
   assert.ok(contains(tree, '派发给 DSH 执行'))
 })
 
-test('dispatched phase surfaces the acceptance card above the collapse', () => {
+test('dispatched phase does not bring back the deleted acceptance section', () => {
   const tree = render({
     v: 1,
     savedAt: Date.now(),
@@ -170,8 +163,8 @@ test('dispatched phase surfaces the acceptance card above the collapse', () => {
     dispatch: { state: 'done', sessionId: 'session-x', title: 'Done Project', permission: 'danger-full-access' },
   })
   assert.ok(contains(tree, '已派发，DSH 开始执行'))
-  assert.ok(contains(tree, 'Claude 验收'))
-  assert.ok(contains(tree, '立即验收'))
+  assert.ok(!contains(tree, 'Claude 验收（可选，展开查看）'))
+  assert.ok(!contains(tree, '立即验收'))
 })
 
 test('requests carry a timeout signal and map aborts to a readable error', async () => {
@@ -188,7 +181,7 @@ test('requests carry a timeout signal and map aborts to a readable error', async
     globalThis.fetch = async () => {
       throw Object.assign(new Error('aborted'), { name: 'TimeoutError' })
     }
-    await assert.rejects(() => mainOptions.inject().acceptanceStatus('session-x'), /请求超时/)
+    await assert.rejects(() => mainOptions.inject().archiveTask('session-x'), /请求超时/)
   } finally {
     globalThis.fetch = originalFetch
   }

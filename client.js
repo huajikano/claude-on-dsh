@@ -78,7 +78,6 @@ window.__ModuleLoader__.load({
         reviewOpen: '打开终端让 Claude 验收',
         reviewOpened: '已打开 Claude 验收终端',
         reviewPath: '报告将写入',
-        acceptanceSection: 'Claude 验收（可选，展开查看）',
         acceptanceShow: '显示验收',
         autoAcceptanceToggle: '自动验收（legacyGate）',
         dshAccept: '交给 DSH 验收',
@@ -231,7 +230,6 @@ window.__ModuleLoader__.load({
         reviewOpen: 'Open terminal and let Claude review',
         reviewOpened: 'Claude review terminal opened',
         reviewPath: 'Report will be written to',
-        acceptanceSection: 'Claude acceptance (optional; expand)',
         acceptanceShow: 'Show acceptance',
         autoAcceptanceToggle: 'Auto acceptance (legacyGate)',
         dshAccept: 'Hand off to DSH for acceptance',
@@ -610,19 +608,12 @@ window.__ModuleLoader__.load({
         openSession,
         dispatchTask,
         archiveTask,
-        acceptanceStatus,
-        acceptanceList: fetchAcceptanceList,
-        runAcceptance,
-        skipAcceptance,
-        reviewTerminal,
         dispatchAcceptance,
         runClaudeAcceptance,
         askFirstQuestion,
         sendFirstQuestion,
         listSessions,
         currentSessionId,
-        getSettings,
-        saveSettings,
       } = props
       const tt = useCallback(
         (key, vars) => {
@@ -667,14 +658,6 @@ window.__ModuleLoader__.load({
       const [consumedJobId, setConsumedJobId] = useState(() =>
         restored ? restored.consumedJobId ?? null : null,
       )
-      const [acceptance, setAcceptance] = useState(null)
-      const [acceptanceList, setAcceptanceList] = useState([])
-      const [acceptanceError, setAcceptanceError] = useState('')
-      const [acceptanceBusy, setAcceptanceBusy] = useState(false)
-      const [settings, setSettings] = useState({ autoAcceptance: true })
-      const [reviewPath, setReviewPath] = useState('')
-      const [reviewBusy, setReviewBusy] = useState(false)
-      const [reviewSession, setReviewSession] = useState('')
       const [dialog, setDialog] = useState(null)
       const [firstQuestion, setFirstQuestion] = useState(null)
       const [allSessions, setAllSessions] = useState([])
@@ -791,12 +774,6 @@ window.__ModuleLoader__.load({
       }, [toast])
 
       useEffect(() => {
-        getSettings()
-          .then((data) => setSettings((current) => ({ ...current, ...data })))
-          .catch(() => {})
-      }, [])
-
-      useEffect(() => {
         let stopped = false
         listSessions()
           .then((data) => {
@@ -807,147 +784,6 @@ window.__ModuleLoader__.load({
           stopped = true
         }
       }, [])
-
-      async function loadAcceptance(sessionId) {
-        if (!sessionId) return
-        try {
-          const data = await acceptanceStatus(sessionId)
-          setAcceptance(data)
-          setAcceptanceError('')
-        } catch (error) {
-          setAcceptanceError(error.message)
-        }
-      }
-
-      async function loadAcceptanceList() {
-        try {
-          const data = await fetchAcceptanceList()
-          const items = Array.isArray(data && data.items) ? data.items : []
-          setAcceptanceList(items)
-          return items
-        } catch {
-          return []
-        }
-      }
-
-      async function runAcceptanceNow() {
-        const sessionId =
-          (acceptance && acceptance.sessionId) ||
-          (history.find((entry) => entry.sessionId && entry.sessionId !== 'session-test') || {}).sessionId
-        if (!sessionId) {
-          fail(tt('acceptanceNoSession'))
-          return
-        }
-        setAcceptanceBusy(true)
-        try {
-          await runAcceptance(sessionId)
-          setAcceptance((current) =>
-            current && current.sessionId === sessionId
-              ? { ...current, state: { ...(current.state || {}), state: 'running', phase: tt('acceptanceRunning') } }
-              : current,
-          )
-          setTimeout(() => loadAcceptance(sessionId), 600)
-        } catch (error) {
-          setAcceptanceError(error.message)
-        } finally {
-          setTimeout(() => setAcceptanceBusy(false), 1500)
-        }
-      }
-
-      async function skipAcceptanceNow() {
-        const sessionId =
-          (acceptance && acceptance.sessionId) ||
-          (history.find((entry) => entry.sessionId) || {}).sessionId
-        if (!sessionId) {
-          fail(tt('acceptanceNoSession'))
-          return
-        }
-        try {
-          await skipAcceptance(sessionId)
-          setAcceptance((current) =>
-            current && current.sessionId === sessionId
-              ? { ...current, state: { ...(current.state || {}), state: 'skipped', phase: tt('acceptanceSkipped') } }
-              : current,
-          )
-        } catch (error) {
-          setAcceptanceError(error.message)
-        }
-      }
-
-      async function dispatchAcceptanceNow() {
-        if (form.projectDir.trim().length === 0) {
-          fail(tt('requiredDir'))
-          return
-        }
-        let targetSession = reviewSession
-        if (!targetSession) {
-          const entry = history.find(
-            (item) => item.projectDir === form.projectDir && item.sessionId,
-          )
-          if (!entry) {
-            fail(tt('reviewPickSession'))
-            return
-          }
-          targetSession = entry.sessionId
-        }
-        setReviewBusy(true)
-        try {
-          const data = await dispatchAcceptance({
-            projectDir: form.projectDir,
-            sessionId: targetSession,
-          })
-          setToast(tt('dshAcceptOpened'))
-          try {
-            await refreshSessions(data.sessionId)
-          } catch {}
-          openSession(data.sessionId)
-        } catch (error) {
-          fail(error.message, error.hint)
-        } finally {
-          setReviewBusy(false)
-        }
-      }
-
-      async function openReviewNow() {
-        if (form.projectDir.trim().length === 0) {
-          fail(tt('requiredDir'))
-          return
-        }
-        setReviewBusy(true)
-        try {
-          const data = await reviewTerminal({
-            projectDir: form.projectDir,
-            sessionId: reviewSession,
-          })
-          setReviewPath(data.reportPath || '')
-          setToast(tt('reviewOpened'))
-        } catch (error) {
-          fail(error.message, error.hint)
-        } finally {
-          setReviewBusy(false)
-        }
-      }
-
-      useEffect(() => {
-        ;(async () => {
-          const items = await loadAcceptanceList()
-          if (items.length > 0) {
-            if (!acceptance) loadAcceptance(items[0].sessionId)
-            return
-          }
-          if (acceptance || history.length === 0) return
-          const latest = history.find((entry) => entry.sessionId && entry.sessionId !== 'session-test')
-          if (latest) loadAcceptance(latest.sessionId)
-        })()
-      }, [history])
-
-      useEffect(() => {
-        const phase = acceptance && acceptance.state ? acceptance.state.state : ''
-        if (!['armed', 'asking', 'running'].includes(phase)) return
-        const sessionId = acceptance.sessionId
-        const timer = setInterval(() => loadAcceptance(sessionId), 1500)
-        return () => clearInterval(timer)
-      }, [acceptance && acceptance.state ? acceptance.state.state : '', acceptance && acceptance.sessionId])
 
       const cliReady = Boolean(detect && detect.cli && detect.cli.found && detect.cli.runnable)
       const desktopReady = Boolean(detect && detect.desktop && detect.desktop.found)
@@ -1069,8 +905,6 @@ window.__ModuleLoader__.load({
           try {
             await refreshSessions(data.sessionId)
           } catch {}
-          loadAcceptance(data.sessionId)
-          loadAcceptanceList()
         } catch (error) {
           setDispatch({ state: 'error', message: error.message, hint: error.hint })
         }
@@ -1792,304 +1626,11 @@ window.__ModuleLoader__.load({
           )
         : null
 
-      function verdictClass(conclusion) {
-        return conclusion === 'pass' ? 'pass' : conclusion === 'fail' ? 'fail' : 'uncertain'
-      }
-
-      function acceptanceLabel(data) {
-        const state = data && data.state ? data.state.state : ''
-        if (state === 'armed') return tt('acceptanceArmed')
-        if (state === 'asking') return tt('acceptanceAsk')
-        if (state === 'running') return tt('acceptanceRunning')
-        if (state === 'completed') return tt('acceptanceCompleted')
-        if (state === 'skipped') return tt('acceptanceSkipped')
-        if (state === 'failed') return tt('acceptanceFailed')
-        if (state === 'off') return tt('acceptanceOff')
-        return data && data.report ? tt('acceptanceCompleted') : tt('acceptanceIdle')
-      }
-
-      const acceptanceReport = acceptance && acceptance.report ? acceptance.report : null
-      const acceptanceState = acceptance && acceptance.state ? acceptance.state : null
-      const legacyGateEnabled = Boolean(detect && detect.config && detect.config.legacyGate)
-      const autoToggle = legacyGateEnabled
-        ? h(
-            'div',
-            { className: 'cc-accToggles' },
-            h(
-              'label',
-              { className: 'cc-switch' },
-              h('input', {
-                type: 'checkbox',
-                checked: Boolean(settings.autoAcceptance),
-                onChange: (event) => {
-                  const value = event.target.checked
-                  setSettings((current) => ({ ...current, autoAcceptance: value }))
-                  saveSettings({ autoAcceptance: value })
-                },
-              }),
-              tt('autoAcceptanceToggle'),
-            ),
-          )
-        : null
-      const acceptanceCard = h(
-        'div',
-        { className: 'cc-card cc-acceptance' },
-        h(
-          'div',
-          { className: 'cc-refinedHead' },
-          h('div', { className: 'cc-cardTitle' }, tt('acceptance')),
-          h(
-            'div',
-            { className: 'cc-chips' },
-            h(Chip, {
-              on: !acceptance || acceptance.gatePolicy !== 'off',
-              label: `${tt('gatePolicy')}: ${acceptance ? acceptance.gatePolicy : 'ask'}`,
-            }),
-            h(Chip, {
-              on: Boolean(acceptanceState && acceptanceState.state === 'completed'),
-              warn: Boolean(acceptanceState && acceptanceState.state === 'failed'),
-              label: acceptanceLabel(acceptance),
-            }),
-          ),
-        ),
-        h('div', { className: 'cc-hint' }, tt('acceptanceHint')),
-        autoToggle,
-        acceptanceError ? h(Notice, { notice: { message: acceptanceError }, tt }) : null,
-        !acceptance ? h('div', { className: 'cc-hint' }, tt('acceptanceNoSession')) : null,
-        acceptance
-          ? h(
-              'div',
-              { className: 'cc-accHead' },
-              h(
-                'span',
-                {
-                  className: `cc-verdict ${
-                    acceptanceReport ? verdictClass(acceptanceReport.overall) : acceptanceState && acceptanceState.state === 'failed' ? 'fail' : 'uncertain'
-                  }`,
-                },
-                acceptanceReport ? acceptanceReport.overall.toUpperCase() : acceptanceLabel(acceptance),
-              ),
-              h('span', { className: 'cc-hint' }, acceptance.sessionId || ''),
-              acceptanceState && acceptanceState.phase ? h('span', { className: 'cc-hint' }, acceptanceState.phase) : null,
-            )
-          : null,
-        acceptanceReport
-          ? h(
-              React.Fragment,
-              null,
-              h(
-                'div',
-                { className: 'cc-accMeta' },
-                h('span', { className: 'cc-hint' }, `judge: ${acceptanceReport.meta.judge.status}`),
-                h('span', { className: 'cc-hint' }, `${Math.round(acceptanceReport.meta.durationMs / 1000)}s`),
-                h('span', { className: 'cc-hint' }, acceptanceReport.generatedAt),
-              ),
-              h(
-                'div',
-                { className: `cc-verdictBanner ${verdictClass(acceptanceReport.overall)}` },
-                h('strong', null, acceptanceReport.overall.toUpperCase()),
-                h('span', null, acceptanceReport.meta.summary || ''),
-              ),
-              h(
-                'div',
-                { className: 'cc-accChecks' },
-                acceptanceReport.checks.map((check) =>
-                  h(
-                    'div',
-                    { className: `cc-accCheck cc-${verdictClass(check.conclusion)}`, key: check.id },
-                    h('span', { className: `cc-verdict ${verdictClass(check.conclusion)}` }, check.conclusion),
-                    h('span', { className: 'cc-accCheckName' }, check.name),
-                    h('div', { className: 'cc-hint' }, check.note),
-                    check.evidence.length > 0
-                      ? h(
-                          'details',
-                          { className: 'cc-details' },
-                          h('summary', null, `${tt('acceptanceEvidence')} (${check.evidence.length})`),
-                          check.evidence.map((item) =>
-                            h(
-                              'div',
-                              { className: 'cc-evidence', key: item.id },
-                              h('code', null, item.locator),
-                              h('pre', { className: 'cc-evidenceExcerpt' }, item.excerpt),
-                            ),
-                          ),
-                        )
-                      : null,
-                  ),
-                ),
-              ),
-              acceptanceReport.missing.length > 0
-                ? h(
-                    'div',
-                    { className: 'cc-accSection' },
-                    h('div', { className: 'cc-sectionTitle' }, tt('acceptanceMissing')),
-                    h(
-                      'ul',
-                      { className: 'cc-ul' },
-                      acceptanceReport.missing.map((item, index) => h('li', { key: `am-${index}` }, item)),
-                    ),
-                  )
-                : null,
-              acceptanceReport.rework.length > 0
-                ? h(
-                    'div',
-                    { className: 'cc-accSection' },
-                    h('div', { className: 'cc-sectionTitle' }, tt('acceptanceRework')),
-                    h(
-                      'ul',
-                      { className: 'cc-ul' },
-                      acceptanceReport.rework.map((item, index) => h('li', { key: `ar-${index}` }, item)),
-                    ),
-                  )
-                : null,
-              acceptance.reportPath
-                ? h('div', { className: 'cc-hint cc-accPath' }, `${tt('acceptanceReport')}: ${acceptance.reportPath}`)
-                : null,
-            )
-          : null,
-        h(
-          'div',
-          { className: 'cc-actions' },
-          h(
-            Button,
-            {
-              variant: 'primary',
-              busy: acceptanceBusy,
-              disabled:
-                acceptanceBusy ||
-                Boolean(acceptanceState && ['running', 'asking'].includes(acceptanceState.state)),
-              onClick: runAcceptanceNow,
-            },
-            tt('acceptanceRun'),
-          ),
-          h(
-            Button,
-            {
-              variant: 'ghost',
-              disabled: acceptanceBusy || Boolean(acceptanceState && acceptanceState.state === 'running'),
-              onClick: skipAcceptanceNow,
-            },
-            tt('acceptanceSkip'),
-          ),
-          h(
-            Button,
-            {
-              variant: 'ghost',
-              onClick: () => {
-                loadAcceptanceList()
-                if (acceptance && acceptance.sessionId) loadAcceptance(acceptance.sessionId)
-              },
-            },
-            tt('acceptanceRefresh'),
-          ),
-        ),
-        acceptanceList.length > 0
-          ? h(
-              'div',
-              { className: 'cc-accRecent' },
-              h('div', { className: 'cc-sectionTitle' }, tt('acceptanceRecent')),
-              acceptanceList.slice(0, 6).map((item) =>
-                h(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'cc-accRecentItem',
-                    key: item.sessionId,
-                    onClick: () => loadAcceptance(item.sessionId),
-                  },
-                  h('span', { className: `cc-verdict ${verdictClass(item.overall)}` }, item.overall),
-                  h('span', { className: 'cc-accRecentTitle' }, item.title || item.sessionId),
-                  h('span', { className: 'cc-hint' }, timeText(new Date(item.generatedAt).getTime())),
-                ),
-              ),
-            )
-          : null,
-      )
-
-      const reviewCard = h(
-        'div',
-        { className: 'cc-card cc-review' },
-        h('div', { className: 'cc-cardTitle' }, tt('reviewTitle')),
-        h('div', { className: 'cc-hint' }, tt('reviewHint')),
-        h(
-          Field,
-          { label: tt('projectDir') },
-          h('input', {
-            className: 'cc-input',
-            value: form.projectDir,
-            placeholder: tt('projectDirPlaceholder'),
-            spellCheck: false,
-            onChange: (event) => update({ projectDir: event.target.value }),
-          }),
-        ),
-        h(
-          Field,
-          { label: tt('reviewSession') },
-          h(
-            'select',
-            {
-              className: 'cc-input',
-              value: reviewSession,
-              onChange: (event) => {
-                const sessionId = event.target.value
-                setReviewSession(sessionId)
-                const entry = history.find((item) => item.sessionId === sessionId)
-                if (entry) update({ projectDir: entry.projectDir })
-              },
-            },
-            h('option', { value: '' }, tt('reviewSessionAuto')),
-            history
-              .filter((entry) => entry.sessionId && entry.sessionId !== 'session-test')
-              .map((entry) =>
-                h(
-                  'option',
-                  { value: entry.sessionId, key: entry.sessionId },
-                  `${entry.title || entry.projectDir} · ${entry.sessionId.slice(-8)}`,
-                ),
-              ),
-          ),
-        ),
-        h(
-          'div',
-          { className: 'cc-actions' },
-          h(
-            Button,
-            { variant: 'primary', busy: reviewBusy, disabled: reviewBusy, onClick: dispatchAcceptanceNow },
-            tt('dshAccept'),
-          ),
-          h(
-            Button,
-            { variant: 'ghost', disabled: reviewBusy, onClick: openReviewNow },
-            tt('reviewOpen'),
-          ),
-        ),
-        reviewPath
-          ? h('div', { className: 'cc-hint cc-accPath' }, `${tt('reviewPath')}: ${reviewPath}`)
-          : null,
-      )
-
-      // Kept collapsed outside the dispatched focus, so the panel stays calm
-      // while the acceptance tools remain one click away.
-      const acceptancePreview = h(
-        'details',
-        { className: 'cc-accDetails' },
-        h('summary', null, tt('acceptanceSection')),
-        acceptanceCard,
-        reviewCard,
-      )
-
-      const reviewDetails = h(
-        'details',
-        { className: 'cc-accDetails' },
-        h('summary', null, tt('reviewTitle')),
-        reviewCard,
-      )
-
       // Phase-focused layout: the handoff card and the dispatch result own the
       // top of the panel, while the already-used setup form folds away.
       let main
       if (phase === 'dispatched') {
-        main = h(React.Fragment, null, rightCard, acceptanceCard, reviewDetails)
+        main = rightCard
       } else if (phase === 'refined') {
         main = h(
           React.Fragment,
@@ -2159,7 +1700,6 @@ window.__ModuleLoader__.load({
         ),
         notice ? h(Notice, { notice, tt }) : null,
         main,
-        phase === 'dispatched' ? null : acceptancePreview,
         h(
           'div',
           { className: 'cc-history' },
@@ -2522,26 +2062,6 @@ window.__ModuleLoader__.load({
             method: 'POST',
             body: JSON.stringify({ sessionId }),
           }),
-        acceptanceStatus: (sessionId) => request(`/acceptance?id=${encodeURIComponent(sessionId)}`, { timeoutMs: 30_000 }),
-        acceptanceList: () => request('/acceptance/list', { timeoutMs: 30_000 }),
-        runAcceptance: (sessionId) =>
-          request('/acceptance/run', {
-            method: 'POST',
-            body: JSON.stringify({ sessionId }),
-            timeoutMs: 30_000,
-          }),
-        skipAcceptance: (sessionId) =>
-          request('/acceptance/skip', {
-            method: 'POST',
-            body: JSON.stringify({ sessionId }),
-            timeoutMs: 30_000,
-          }),
-        reviewTerminal: (payload) =>
-          request('/acceptance/terminal', {
-            method: 'POST',
-            body: JSON.stringify(payload),
-            timeoutMs: 60_000,
-          }),
         dispatchAcceptance: (payload) =>
           request('/acceptance/dispatch', {
             method: 'POST',
@@ -2580,12 +2100,6 @@ window.__ModuleLoader__.load({
           } catch {}
           return ''
         },
-        getSettings: () => request('/settings'),
-        saveSettings: (patch) =>
-          request('/settings', {
-            method: 'POST',
-            body: JSON.stringify(patch),
-          }),
       })
 
       ctx.slots.inject('main', () =>

@@ -103,9 +103,9 @@
 ## 两种使用方式
 
 1. **派发给 DSH**：Claude 提问 → 你回答 → DSH 执行整案。这个入口**不会**打开 Claude 终端。
-2. **Claude 直接验收**：在面板「Claude 直接验收（终端可见）」卡片里选项目目录，点击后打开一个真实的 Claude Code 终端，由 Claude 检查改动、运行测试、把报告写到 `.dsh/acceptance/visible-*.md`。整个过程在终端里可见，不经过 DSH 的隐藏验收。
+2. **Claude 直接验收**：在派发记录或派发成功卡片里点「交给 DSH 验收」，在对话框选择「Claude 直接验收」，插件会按该会话的原始事实生成报告；也可以运行 `node bin/acceptance.mjs run <sessionId>` 在终端查看完整过程。
 
-自动验收默认 **off**；只有同时设置 `acceptance.legacyGate: true` 与 `gatePolicy: ask|auto`，才会在 DSH turn 结束后跑隐藏验收。面板上的「立即验收 / 跳过验收」与 `/acceptance run` 属于手动入口，在 lean 模式下始终可用。
+自动验收默认 **off**；只有同时设置 `acceptance.legacyGate: true` 与 `gatePolicy: ask|auto`，才会在 DSH turn 结束后跑隐藏验收。手动入口 `/acceptance run <sessionId>` 与 `node bin/acceptance.mjs` 在 lean 模式下始终可用。
 
 ## 自动验收（Acceptance Gate，1.0.1+）
 
@@ -133,9 +133,8 @@
 真实样本见 [acceptance-sample.md](docs/acceptance-sample.md) 与
 [acceptance-sample.json](docs/acceptance-sample.json)。
 
-插件主页的「Claude 验收」卡片会显示：验收状态（已就绪 / 等待选择 / Claude 验收中 / 完成 / 跳过 / 失败）、总结论、
-三项检查及说明、可展开的逐条证据、缺失判据、返工建议、报告路径，并提供「立即验收 / 跳过验收 / 刷新」与「最近验收」列表。
-验收完成后还会把结论与报告路径注入会话，DSH 在下一轮就能看到。
+验收通过派发记录或派发成功卡片里的「交给 DSH 验收」对话框发起：可以选「Claude 直接验收」生成报告，或把验收任务发回原 DSH 会话。
+报告包含总结论、三项检查、可定位证据、缺失判据、返工建议与报告路径。
 
 每条 `pass`/`fail` 检查项必须绑定至少一条可定位证据（`path` + 行号区间或 `locator` + 原文片段）；
 证据为空只能是 `uncertain`，校验器会拒绝「pass/fail 但证据为空」的报告。只要存在缺失判据或任一 `uncertain`
