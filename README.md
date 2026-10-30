@@ -4,6 +4,36 @@
 
 仓库：<https://github.com/huajikano/claude-on-dsh>
 
+## 在 DSH 里直接安装（GitHub）
+
+无需克隆、无需构建。DSH 的 **Plugins** 页面支持从 Git 安装 bundle：
+
+1. 打开 DSH 侧栏 → **Plugins**。
+2. 点 **Add plugin / 安装插件**，在来源/地址栏填入：
+
+   ```text
+   github:huajikano/claude-on-dsh
+   ```
+
+   固定版本（推荐）：
+
+   ```text
+   github:huajikano/claude-on-dsh#v1.1.4
+   ```
+
+   等价写法：
+
+   ```text
+   git+https://github.com/huajikano/claude-on-dsh.git
+   ```
+
+3. 安装完成后启用 **Claude on DSH** bundle；若提示重启，重启 DSH。
+4. 刷新 Web 页面，左侧栏出现橙色星形图标。
+
+要求：Windows；本机已安装 Claude Code CLI（或安装后在插件配置里填 `claudeCliPath`）；DSH 安装插件需要 Full access 或批准。仓库公开，无需 token。插件是纯 JavaScript bundle，没有构建步骤。
+
+> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 1.1.4。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
+
 ## 工作流
 
 1. **项目设定**：填写项目目录、项目名称和项目目标，选择指挥引擎。
@@ -27,9 +57,9 @@
 
 > 桌面版通过 CC Switch 使用其配置的 API key；插件自身不读取、不保存任何密钥，只把 `~/.claude/settings.json` 里的 `ANTHROPIC_BASE_URL` 当作代理健康检查目标。
 
-## 安装
+## 本地开发 / 离线安装
 
-作为本地 bundle 安装到 DSH profile：
+作为本地 bundle 链接到 DSH profile（改代码即时生效，适合开发）：
 
 1. 克隆本仓库到任意目录；
 2. 在 DSH 的 Plugins 页面从本地目录安装，或用插件管理器的 `install_bundle` 指向仓库根目录；
