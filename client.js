@@ -98,6 +98,9 @@ window.__ModuleLoader__.load({
         firstQuestionSend: '发送首问',
         firstQuestionRequired: '请填写新要求',
         firstQuestionDone: '首问已发回该对话',
+        existingTitle: '在所有 DSH 对话中提问',
+        existingHint: 'DSH 工作区的全部对话都可以选；Claude 会先读该对话与项目，再把首问发回原会话。',
+        existingPick: '选择一个已有对话…',
         dshAcceptOpened: '已把验收任务发回原 DSH 会话',
         reviewPickSession: '请先选择验收对象（该项目的首问会话）',
         acceptanceNoSession: '还没有可验收的会话。',
@@ -243,6 +246,9 @@ window.__ModuleLoader__.load({
         firstQuestionSend: 'Send first question',
         firstQuestionRequired: 'Enter a requirement',
         firstQuestionDone: 'First question sent to the conversation',
+        existingTitle: 'Ask in any DSH conversation',
+        existingHint: 'Every conversation in the DSH workspace is selectable; Claude reads it and the project, then posts its first question back.',
+        existingPick: 'Choose an existing conversation…',
         dshAcceptOpened: 'Acceptance task sent back to the original DSH session',
         reviewPickSession: 'Choose the original first-question session first',
         acceptanceNoSession: 'No dispatch to assess yet.',
@@ -536,6 +542,7 @@ window.__ModuleLoader__.load({
         dispatchAcceptance,
         runClaudeAcceptance,
         askFirstQuestion,
+        listSessions,
         getSettings,
         saveSettings,
       } = props
@@ -593,6 +600,8 @@ window.__ModuleLoader__.load({
       const [reviewSession, setReviewSession] = useState('')
       const [dialog, setDialog] = useState(null)
       const [firstQuestion, setFirstQuestion] = useState(null)
+      const [allSessions, setAllSessions] = useState([])
+      const [existingSession, setExistingSession] = useState('')
 
       const update = useCallback((patch) => {
         setForm((current) => ({ ...current, ...patch }))
@@ -709,6 +718,18 @@ window.__ModuleLoader__.load({
         getSettings()
           .then((data) => setSettings((current) => ({ ...current, ...data })))
           .catch(() => {})
+      }, [])
+
+      useEffect(() => {
+        let stopped = false
+        listSessions()
+          .then((data) => {
+            if (!stopped) setAllSessions(Array.isArray(data.items) ? data.items : [])
+          })
+          .catch(() => {})
+        return () => {
+          stopped = true
+        }
       }, [])
 
       async function loadAcceptance(sessionId) {
@@ -1963,6 +1984,52 @@ window.__ModuleLoader__.load({
         refinedCard,
         h(
           'div',
+          { className: 'cc-card cc-existing' },
+          h('div', { className: 'cc-cardTitle' }, tt('existingTitle')),
+          h('div', { className: 'cc-hint' }, tt('existingHint')),
+          h(
+            'select',
+            {
+              className: 'cc-select',
+              value: existingSession,
+              onChange: (event) => setExistingSession(event.target.value),
+            },
+            h('option', { value: '' }, tt('existingPick')),
+            allSessions.map((item) =>
+              h(
+                'option',
+                { value: item.sessionId, key: item.sessionId },
+                `${(item.cwd || '').split(/[\\/]/).filter(Boolean).pop() || item.cwd} · ${item.sessionId.slice(-8)} · ${timeText(item.updatedAt)}`,
+              ),
+            ),
+          ),
+          h(
+            'div',
+            { className: 'cc-actions' },
+            h(
+              Button,
+              {
+                variant: 'primary',
+                disabled: !existingSession,
+                onClick: () => {
+                  const selected = allSessions.find(
+                    (item) => item.sessionId === existingSession,
+                  )
+                  if (!selected) return
+                  openFirstQuestionDialog({
+                    sessionId: selected.sessionId,
+                    projectDir: selected.cwd,
+                    title:
+                      (selected.cwd || '').split(/[\\/]/).filter(Boolean).pop() || selected.cwd,
+                  })
+                },
+              },
+              tt('firstQuestion'),
+            ),
+          ),
+        ),
+        h(
+          'div',
           { className: 'cc-history' },
           h('div', { className: 'cc-sectionTitle' }, tt('history')),
           history.length === 0
@@ -2241,6 +2308,7 @@ window.__ModuleLoader__.load({
             method: 'POST',
             body: JSON.stringify(payload),
           }),
+        listSessions: () => request('/sessions'),
         getSettings: () => request('/settings'),
         saveSettings: (patch) =>
           request('/settings', {
@@ -2558,7 +2626,13 @@ window.__ModuleLoader__.load({
   border: 1px solid var(--dsw-alias-border-l2); border-radius: 14px;
   background: var(--dsw-alias-bg-overlay); box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
 }
-.cc-toast {
+.cc-select {
+  inline-size: 100%; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
+  font-size: 12.5px;
+}
+.cc-existing { display: flex; flex-direction: column; gap: 10px; }
   position: fixed; inset-block-end: 26px; inset-inline: 0; margin-inline: auto; z-index: 60;
   inline-size: fit-content; padding: 7px 14px; border-radius: 999px;
   background: var(--dsw-alias-bg-overlay); color: var(--dsw-alias-label-primary);

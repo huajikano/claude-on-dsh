@@ -1781,6 +1781,22 @@ export function apply(ctx, config = {}) {
       }),
     },
     {
+      path: '/sessions',
+      methods: ['GET'],
+      handler: endpoint(async () => {
+        const result = await ctx.sessionController.list({}, AbortSignal.timeout(20_000))
+        const items = (result.items || [])
+          .filter((item) => item.cwd && !item.origin && !item.blank)
+          .map((item) => ({
+            sessionId: item.sessionId,
+            cwd: item.cwd,
+            updatedAt: item.updatedAt,
+            running: Boolean(item.running),
+          }))
+        return json({ items })
+      }),
+    },
+    {
       path: '/session/first-question',
       methods: ['POST'],
       handler: endpoint(async (request) => {
