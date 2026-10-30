@@ -99,6 +99,11 @@ window.__ModuleLoader__.load({
         firstQuestionRequired: '请填写新要求',
         firstQuestionDone: '首问已发回该对话',
         firstQuestionOther: '选择其他对话（可选）',
+        firstQuestionGenerate: '生成首问',
+        firstQuestionAnswer: '你的回答',
+        firstQuestionAnswerPlaceholder: '回答 Claude 的首问，或点选上面的候选答案。',
+        firstQuestionAnswerRequired: '请先回答 Claude 的首问',
+        firstQuestionSendToDsh: '发送给 DSH',
         firstQuestionBusy: '正在读取对话并生成首问…',
         existingSection: '在所有 DSH 对话中提问（可选，展开）',
         existingTitle: '在所有 DSH 对话中提问',
@@ -250,6 +255,11 @@ window.__ModuleLoader__.load({
         firstQuestionRequired: 'Enter a requirement',
         firstQuestionDone: 'First question sent to the conversation',
         firstQuestionOther: 'Choose another conversation (optional)',
+        firstQuestionGenerate: 'Generate first question',
+        firstQuestionAnswer: 'Your answer',
+        firstQuestionAnswerPlaceholder: 'Answer Claude’s question, or pick a choice above.',
+        firstQuestionAnswerRequired: 'Answer the first question first',
+        firstQuestionSendToDsh: 'Send to DSH',
         firstQuestionBusy: 'Reading the conversation and drafting the first question…',
         existingSection: 'Ask in any DSH conversation (optional; expand)',
         existingTitle: 'Ask in any DSH conversation',
@@ -548,6 +558,7 @@ window.__ModuleLoader__.load({
         dispatchAcceptance,
         runClaudeAcceptance,
         askFirstQuestion,
+        sendFirstQuestion,
         listSessions,
         currentSessionId,
         getSettings,
@@ -1107,7 +1118,14 @@ window.__ModuleLoader__.load({
 
       function openFirstQuestionDialog(entry) {
         if (!entry || !entry.sessionId) return
-        setFirstQuestion({ entry, requirement: '', busy: false, error: '' })
+        setFirstQuestion({
+          entry,
+          requirement: '',
+          busy: false,
+          error: '',
+          generated: null,
+          answer: '',
+        })
       }
 
       async function sendFirstQuestionNow() {
@@ -1129,6 +1147,34 @@ window.__ModuleLoader__.load({
           const data = await askFirstQuestion({
             sessionId: firstQuestion.entry.sessionId,
             requirement: firstQuestion.requirement,
+          })
+          setFirstQuestion((current) =>
+            current
+              ? { ...current, busy: false, error: '', generated: data, answer: '' }
+              : current,
+          )
+        } catch (error) {
+          setFirstQuestion((current) =>
+            current ? { ...current, busy: false, error: error.message } : current,
+          )
+        }
+      }
+
+      async function sendFirstQuestionToDsh() {
+        if (!firstQuestion || !firstQuestion.generated) return
+        if (!firstQuestion.answer.trim()) {
+          setFirstQuestion((current) =>
+            current ? { ...current, error: tt('firstQuestionAnswerRequired') } : current,
+          )
+          return
+        }
+        setFirstQuestion((current) => (current ? { ...current, busy: true, error: '' } : current))
+        try {
+          const data = await sendFirstQuestion({
+            sessionId: firstQuestion.entry.sessionId,
+            question: firstQuestion.generated.question,
+            answer: firstQuestion.answer,
+            brief: firstQuestion.generated.brief,
           })
           setToast(tt('firstQuestionDone'))
           setFirstQuestion(null)
@@ -2156,6 +2202,8 @@ window.__ModuleLoader__.load({
                                     .filter(Boolean)
                                     .pop(),
                                 },
+                                generated: null,
+                                answer: '',
                               }
                             : current,
                         )
@@ -2186,6 +2234,52 @@ window.__ModuleLoader__.load({
                       ),
                   }),
                 ),
+                firstQuestion.generated
+                  ? h(
+                      React.Fragment,
+                      null,
+                      h('div', { className: 'cc-cardTitle' }, firstQuestion.generated.question),
+                      firstQuestion.generated.understanding
+                        ? h('div', { className: 'cc-hint' }, firstQuestion.generated.understanding)
+                        : null,
+                      Array.isArray(firstQuestion.generated.choices) &&
+                      firstQuestion.generated.choices.length > 0
+                        ? h(
+                            'div',
+                            { className: 'cc-actions' },
+                            firstQuestion.generated.choices.map((choice) =>
+                              h(
+                                Button,
+                                {
+                                  key: choice,
+                                  variant: 'ghost',
+                                  onClick: () =>
+                                    setFirstQuestion((current) =>
+                                      current ? { ...current, answer: choice } : current,
+                                    ),
+                                },
+                                choice,
+                              ),
+                            ),
+                          )
+                        : null,
+                      h(
+                        'label',
+                        { className: 'cc-field' },
+                        h('span', { className: 'cc-label' }, tt('firstQuestionAnswer')),
+                        h('textarea', {
+                          className: 'cc-textarea',
+                          rows: 4,
+                          value: firstQuestion.answer,
+                          placeholder: tt('firstQuestionAnswerPlaceholder'),
+                          onChange: (event) =>
+                            setFirstQuestion((current) =>
+                              current ? { ...current, answer: event.target.value } : current,
+                            ),
+                        }),
+                      ),
+                    )
+                  : null,
                 firstQuestion.error
                   ? h(
                       'div',
@@ -2202,9 +2296,15 @@ window.__ModuleLoader__.load({
                       variant: 'primary',
                       busy: firstQuestion.busy,
                       disabled: firstQuestion.busy,
-                      onClick: sendFirstQuestionNow,
+                      onClick: firstQuestion.generated
+                        ? sendFirstQuestionToDsh
+                        : sendFirstQuestionNow,
                     },
-                    firstQuestion.busy ? tt('firstQuestionBusy') : tt('firstQuestionSend'),
+                    firstQuestion.generated
+                      ? tt('firstQuestionSendToDsh')
+                      : firstQuestion.busy
+                        ? tt('firstQuestionBusy')
+                        : tt('firstQuestionGenerate'),
                   ),
                   h(
                     Button,
@@ -2384,6 +2484,11 @@ window.__ModuleLoader__.load({
           }),
         askFirstQuestion: (payload) =>
           request('/session/first-question', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          }),
+        sendFirstQuestion: (payload) =>
+          request('/session/first-question/send', {
             method: 'POST',
             body: JSON.stringify(payload),
           }),

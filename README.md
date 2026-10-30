@@ -18,7 +18,7 @@
    固定版本（推荐）：
 
    ```text
-   github:huajikano/claude-on-dsh#v1.2.0
+   github:huajikano/claude-on-dsh#v1.2.1
    ```
 
    等价写法：
@@ -32,7 +32,7 @@
 
 要求：Windows；本机已安装 Claude Code CLI（或安装后在插件配置里填 `claudeCliPath`）；DSH 安装插件需要 Full access 或批准。仓库公开，无需 token。插件是纯 JavaScript bundle，没有构建步骤。
 
-> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 1.2.0。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
+> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 1.2.1。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
 
 ## 工作流
 

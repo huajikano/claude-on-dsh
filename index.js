@@ -920,6 +920,7 @@ export function apply(ctx, config = {}) {
       '输出 JSON：',
       '- understanding：2-3 句，说明你从最近对话里了解到的现状（给用户看，不要复述旧任务）',
       '- question：一个最关键、最需要先确认的新问题',
+      '- choices：0-4 个候选答案（可为空数组）',
       '- brief：发给 DSH 的完整消息，包含首问与必要背景，1-3 句，直接可回答/执行',
     ].join('\n')
     const schema = {
@@ -927,6 +928,7 @@ export function apply(ctx, config = {}) {
       properties: {
         understanding: { type: 'string' },
         question: { type: 'string' },
+        choices: { type: 'array', items: { type: 'string' } },
         brief: { type: 'string' },
       },
       required: ['understanding', 'question', 'brief'],
@@ -935,6 +937,7 @@ export function apply(ctx, config = {}) {
     let understanding = ''
     let question = ''
     let brief = ''
+    let choices = []
     const executable = findCli(settings.claudeCliPath)
     if (executable) {
       try {
@@ -952,6 +955,9 @@ export function apply(ctx, config = {}) {
         understanding = text(result.data.understanding).trim()
         question = text(result.data.question).trim()
         brief = text(result.data.brief).trim()
+        choices = Array.isArray(result.data.choices)
+          ? result.data.choices.map((choice) => text(choice).trim()).filter(Boolean).slice(0, 4)
+          : []
       } catch (error) {
         try {
           ctx.logger?.warn?.(
@@ -973,6 +979,10 @@ export function apply(ctx, config = {}) {
       )
     }
     if (!brief) brief = `[Claude 首问]\n${question}\n\n背景：${understanding}`
+    return json({ sessionId, understanding, question, brief, choices, sent: false })
+  }
+
+  async function sendFirstQuestionToSession(sessionId, question, answer, brief) {
     let live = ctx.sessions.get(sessionId)
     if (!live) {
       try {
@@ -985,17 +995,19 @@ export function apply(ctx, config = {}) {
         ctx.permissionPresets.set(live, 'danger-full-access')
       } catch {}
     }
+    const extra = brief && question && !brief.includes(question) ? `\n\n交接背景：${brief}` : ''
+    const text = `[Claude 首问]\n${question}\n\n用户回答：${answer}${extra}`
     await ctx.sessionController.prompt(
       {
         sessionId,
         requestId: randomUUID(),
         mode: 'queue',
-        content: [{ type: 'text', text: brief }],
+        content: [{ type: 'text', text }],
         clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       },
       AbortSignal.timeout(60_000),
     )
-    return json({ sessionId, understanding, question, brief, sent: true })
+    return json({ sessionId, sent: true })
   }
 
   async function readAcceptanceFiles(workspace, sessionId) {
@@ -1844,6 +1856,21 @@ export function apply(ctx, config = {}) {
         if (!sessionId) throw userError('请选择已有 DSH 对话')
         if (!requirement) throw userError('请填写新要求')
         return runFirstQuestion(sessionId, requirement)
+      }),
+    },
+    {
+      path: '/session/first-question/send',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        const sessionId = text(body.sessionId).trim()
+        const question = text(body.question).trim()
+        const answer = text(body.answer).trim()
+        const brief = text(body.brief).trim()
+        if (!sessionId) throw userError('请选择已有 DSH 对话')
+        if (!question) throw userError('缺少 Claude 的首问')
+        if (!answer) throw userError('请先回答 Claude 的首问')
+        return sendFirstQuestionToSession(sessionId, question, answer, brief)
       }),
     },
     {
