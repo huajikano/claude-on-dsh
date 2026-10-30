@@ -1,4 +1,4 @@
-﻿# Claude on DSH
+# Claude on DSH
 
 一个 DSH 侧栏插件：让**本机 Claude Code CLI** 或 **Claude 桌面版**负责新项目的首个提问与规划，然后把完整任务交接给 **DSH** 执行。
 
@@ -18,7 +18,7 @@
    固定版本（推荐）：
 
    ```text
-   github:huajikano/claude-on-dsh#v1.2.2
+   github:huajikano/claude-on-dsh#v1.2.3
    ```
 
    等价写法：
@@ -32,7 +32,24 @@
 
 要求：Windows；本机已安装 Claude Code CLI（或安装后在插件配置里填 `claudeCliPath`）；DSH 安装插件需要 Full access 或批准。仓库公开，无需 token。插件是纯 JavaScript bundle，没有构建步骤。
 
-> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 1.2.2。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
+> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 1.2.3。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
+
+## 更新已安装的版本（重要）
+
+DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 bundle**；直接再次 Add 会提示 `already-installed`，这不是插件版本号没改，而是管理器没有原地升级路径。
+
+更新到 1.2.3：
+
+1. 打开 DSH → **Plugins**；
+2. 找到 **Claude on DSH**，点 **Remove**（只点禁用不够，必须移除依赖）；
+3. 重新 **Add plugin**，填入：
+   ```text
+   github:huajikano/claude-on-dsh#v1.2.3
+   ```
+4. 安装后启用，重启/刷新 DSH；
+5. 如果 profile 里的配置被清除，按下面「配置」一节重新填 `claudeCliPath` 等值。
+
+> 不要用不带 `#v1.2.3` 的 `github:huajikano/claude-on-dsh` 做更新：那会跟随默认分支，无法判断装的是哪一版。固定 tag 更可控。
 
 ## 工作流
 
@@ -54,10 +71,10 @@
 1. 选择一个已经存在的 DSH 对话；
 2. 填写这次的新要求；
 3. Claude 读取该对话的历史、任务、改动文件和 git 状态；
-4. Claude 生成一条带上下文的首问，**直接发回这个已有对话**，不会新建会话。
-5. 这次发送同时写入派发记录，之后可以在验收列表里找到这个会话和它的报告。
+4. Claude 生成一条带上下文的首问和候选答案，**显示在弹窗里，不会写入会话**；
+5. 你回答后点「发送给 DSH」，才会把首问 + 你的回答 + 交接背景发回这个已有对话，不会新建会话。
 
-只有点「发送首问」才会消耗额度；Claude 不可用或生成失败时会返回错误并保留你的要求，不会静默发出空首问。
+只有点「发送给 DSH」才会写入会话并消耗 DSH 额度；Claude 生成失败会直接报错，不会静默发送旧内容。
 
 ## 本机集成
 
