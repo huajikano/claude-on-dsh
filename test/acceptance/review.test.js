@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 import { attachReviewPrompt } from '../../lib/acceptance/review.js'
 
@@ -6,6 +9,7 @@ function harness({ settings, answers, review }) {
   const handlers = new Map()
   const prompts = []
   const asks = []
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'cod-review-'))
   const ctx = {
     on(event, handler) {
       handlers.set(event, handler)
@@ -26,7 +30,7 @@ function harness({ settings, answers, review }) {
     },
     sessionController: {
       async inspect() {
-        return { meta: { cwd: 'D:\\XiangMu\\test' }, events: [] }
+        return { meta: { cwd: workspace }, events: [] }
       },
       async resolveAgent() {},
       async prompt(request) {

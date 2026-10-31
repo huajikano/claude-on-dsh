@@ -105,6 +105,8 @@ window.__ModuleLoader__.load({
         recordFirstSent: '首问发送',
         recordDispatch: '派发',
         recordAcceptance: '验收',
+        claudeSessions: '插件创建的 Claude 会话',
+        claudeSessionsEmpty: '还没有记录到 Claude CLI 会话。',
         reviewSettings: 'DSH 完成后的验收',
         reviewSettingsHint: '开启后，DSH 每轮结束会在原会话里出现验收选项；默认项也可以设成直接交给 Claude。',
         autoPromptToggle: 'DSH 完成后自动出现验收选项',
@@ -287,6 +289,8 @@ window.__ModuleLoader__.load({
         recordFirstSent: 'First question sent',
         recordDispatch: 'Dispatch',
         recordAcceptance: 'Acceptance',
+        claudeSessions: 'Claude CLI sessions created by this plugin',
+        claudeSessionsEmpty: 'No Claude CLI sessions recorded yet.',
         reviewSettings: 'Acceptance after DSH',
         reviewSettingsHint: 'When enabled, a review choice appears in the original DSH conversation after each turn; the default can hand it straight to Claude.',
         autoPromptToggle: 'Show the review choice after DSH finishes',
@@ -688,6 +692,7 @@ window.__ModuleLoader__.load({
         saveSettings,
         listRecords,
         readRecord,
+        listClaudeSessions,
       } = props
       const tt = useCallback(
         (key, vars) => {
@@ -737,6 +742,7 @@ window.__ModuleLoader__.load({
       const [allSessions, setAllSessions] = useState([])
       const [recordsOpen, setRecordsOpen] = useState(false)
       const [recordItems, setRecordItems] = useState([])
+      const [claudeSessions, setClaudeSessions] = useState([])
       const [recordSelected, setRecordSelected] = useState(null)
       const [recordBusy, setRecordBusy] = useState(false)
       const [recordError, setRecordError] = useState('')
@@ -1136,8 +1142,22 @@ window.__ModuleLoader__.load({
         setRecordBusy(true)
         setRecordError('')
         try {
-          const data = await listRecords()
-          setRecordItems(Array.isArray(data.items) ? data.items : [])
+          const [recordsResult, sessionsResult] = await Promise.allSettled([
+            listRecords(),
+            listClaudeSessions(),
+          ])
+          if (recordsResult.status === 'fulfilled') {
+            setRecordItems(
+              Array.isArray(recordsResult.value.items) ? recordsResult.value.items : [],
+            )
+          } else {
+            setRecordError(recordsResult.reason?.message || '')
+          }
+          if (sessionsResult.status === 'fulfilled') {
+            setClaudeSessions(
+              Array.isArray(sessionsResult.value.items) ? sessionsResult.value.items : [],
+            )
+          }
         } catch (error) {
           setRecordError(error.message)
         } finally {
@@ -2434,12 +2454,44 @@ window.__ModuleLoader__.load({
                       { className: 'cc-recordMeta' },
                       `${recordKindLabel(recordSelected.kind)} · ${timeAgo(recordSelected.at, tt)} · ${recordSelected.title || recordSelected.sessionId}`,
                     ),
+                    h(
+                      'div',
+                      { className: 'cc-recordMeta' },
+                      `Claude 会话：${recordSelected.claudeSessionId || '未记录'}`,
+                    ),
                     h('pre', { className: 'cc-recordContent' }, recordSelected.content),
                   )
                 : h(
                     'div',
                     { className: 'cc-recordList' },
                     recordBusy ? h('div', { className: 'cc-hint' }, tt('recordsLoading')) : null,
+                    h(
+                      'details',
+                      { className: 'cc-claudeSessions' },
+                      h(
+                        'summary',
+                        null,
+                        `${tt('claudeSessions')}（${claudeSessions.length}）`,
+                      ),
+                      claudeSessions.length === 0
+                        ? h('div', { className: 'cc-hint' }, tt('claudeSessionsEmpty'))
+                        : claudeSessions.map((item) =>
+                            h(
+                              'div',
+                              { className: 'cc-claudeSession', key: item.key || item.sessionId },
+                              h(
+                                'span',
+                                { className: 'cc-recordTitle' },
+                                (item.cwd || '').split(/[\\/]/).filter(Boolean).pop() ||
+                                  item.cwd ||
+                                  item.label ||
+                                  '',
+                              ),
+                              h('code', { className: 'cc-claudeSessionId' }, item.sessionId),
+                              h('span', { className: 'cc-recordTime' }, timeAgo(item.at, tt)),
+                            ),
+                          ),
+                    ),
                     recordError
                       ? h(
                           'div',
@@ -2549,6 +2601,7 @@ window.__ModuleLoader__.load({
           }),
         listSessions: () => request('/sessions'),
         listRecords: () => request('/records'),
+        listClaudeSessions: () => request('/claude-sessions'),
         readRecord: (id) => request(`/record?id=${encodeURIComponent(id)}`),
         getSettings: () => request('/settings'),
         saveSettings: (patch) =>
@@ -2934,6 +2987,22 @@ window.__ModuleLoader__.load({
 .cc-switch {
   display: inline-flex; align-items: center; gap: 7px;
   font-size: 12px; color: var(--dsw-alias-label-secondary); cursor: pointer;
+}
+.cc-claudeSessions {
+  border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px;
+  padding: 7px 9px; background: var(--dsw-alias-bg-base);
+}
+.cc-claudeSessions > summary {
+  cursor: pointer; font-size: 11.5px; color: var(--dsw-alias-label-secondary);
+}
+.cc-claudeSession {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center;
+  gap: 8px; padding: 5px 2px; border-block-start: 1px solid var(--dsw-alias-border-l1);
+}
+.cc-claudeSessionId {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px; color: var(--dsw-alias-label-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-inline-size: 230px;
 }
 .cc-recordList { display: flex; flex-direction: column; gap: 5px; max-block-size: 60vh; overflow: auto; }
 .cc-recordItem {

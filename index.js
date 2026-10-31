@@ -463,11 +463,12 @@ export function planningPermissionMode(requested, fallback) {
   return normalizeMode(fallback, 'plan')
 }
 
-function cliArgs({ permissionMode, schema, model, systemPrompt }) {
+function cliArgs({ permissionMode, schema, model, systemPrompt, resume }) {
   const args = ['-p', '--output-format', 'json', '--permission-mode', permissionMode]
   if (schema) args.push('--json-schema', JSON.stringify(schema))
   if (model) args.push('--model', model)
   if (systemPrompt) args.push('--append-system-prompt', systemPrompt)
+  if (resume) args.push('--resume', resume)
   return args
 }
 
@@ -492,8 +493,8 @@ function apiHint(stderr, proxy) {
  * Start one unattended Claude Code run.
  * @returns {{ promise: Promise<{data: object, meta: object}>, cancel: () => void }}
  */
-function startClaudeRun({ executable, prompt, cwd, schema, systemPrompt, permissionMode, model, timeoutMs, proxy }) {
-  const command = spawnCommand(executable, cliArgs({ permissionMode, schema, model, systemPrompt }))
+function startClaudeRun({ executable, prompt, cwd, schema, systemPrompt, permissionMode, model, resume, timeoutMs, proxy }) {
+  const command = spawnCommand(executable, cliArgs({ permissionMode, schema, model, systemPrompt, resume }))
   const child = spawn(command.file, command.args, {
     cwd,
     env: childEnv(),
@@ -777,6 +778,7 @@ async function writeContentRecord(entry) {
     title: String(entry.title || '').slice(0, 200),
     sessionId: String(entry.sessionId || ''),
     projectDir: String(entry.projectDir || ''),
+    claudeSessionId: String(entry.claudeSessionId || ''),
     chars: content.length,
     content,
   }
@@ -803,6 +805,7 @@ async function listContentRecords() {
           title: record.title,
           sessionId: record.sessionId,
           projectDir: record.projectDir,
+          claudeSessionId: record.claudeSessionId || '',
           chars: record.chars,
         })
       } catch {}
@@ -820,6 +823,46 @@ async function readContentRecord(id) {
   } catch {
     return null
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Claude CLI session registry                                         */
+/* ------------------------------------------------------------------ */
+
+function claudeSessionsFile() {
+  return path.join(dshHome(), 'claude-on-dsh', 'claude-sessions.json')
+}
+
+function projectKey(cwd) {
+  const resolved = path.resolve(String(cwd || process.cwd()))
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+}
+
+async function readClaudeSessions() {
+  try {
+    const parsed = JSON.parse(
+      (await readFile(claudeSessionsFile(), 'utf8')).replace(/^\uFEFF/, ''),
+    )
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+let claudeSessionsWrite = Promise.resolve()
+
+function rememberClaudeSession(key, entry) {
+  const task = claudeSessionsWrite.then(async () => {
+    const sessions = await readClaudeSessions()
+    sessions[key] = entry
+    const file = claudeSessionsFile()
+    await mkdir(path.dirname(file), { recursive: true })
+    const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`
+    await writeFile(temporary, `${JSON.stringify(sessions, null, 2)}\n`, 'utf8')
+    await rename(temporary, file)
+  })
+  claudeSessionsWrite = task.catch(() => {})
+  return task
 }
 
 /* ------------------------------------------------------------------ */
@@ -880,23 +923,64 @@ export function apply(ctx, config = {}) {
     judgeInputMaxChars: Number((config.acceptance && config.acceptance.judgeInputMaxChars) ?? 24_000),
   }
 
+  async function currentClaudeSessionId(cwd) {
+    if (!cwd) return ''
+    const sessions = await readClaudeSessions()
+    return (sessions[projectKey(cwd)] && sessions[projectKey(cwd)].sessionId) || ''
+  }
+
+  async function runClaudeFor({ cwd, label, ...options }) {    const key = projectKey(cwd)
+    const sessions = await readClaudeSessions()
+    let resume = sessions[key] && sessions[key].sessionId
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const run = startClaudeRun({ ...options, cwd, resume })
+        const result = await run.promise
+        const sessionId = (result.meta && result.meta.sessionId) || resume
+        if (sessionId) {
+          try {
+            await rememberClaudeSession(key, {
+              sessionId,
+              cwd: path.resolve(cwd),
+              at: Date.now(),
+              label: label || '',
+            })
+          } catch {}
+        }
+        return { ...result, claudeSessionId: sessionId || '', claudeKey: key }
+      } catch (error) {
+        const message = `${error.message || ''} ${error.hint || ''}`
+        if (
+          attempt === 0 &&
+          resume &&
+          /resume|session|conversation|not found|no conversation/i.test(message)
+        ) {
+          resume = ''
+          continue
+        }
+        throw error
+      }
+    }
+    throw userError('Claude 会话恢复失败', '请重试。', 502)
+  }
+
   const judgeRunner = async ({ prompt, schema, systemPrompt, cwd, timeoutMs }) => {
     const executable = findCli(settings.claudeCliPath)
     if (!executable) {
       throw userError('没有找到 Claude Code CLI，无法进行验收判定', '请先确认 CLI 可用。', 500)
     }
-    const run = startClaudeRun({
+    return runClaudeFor({
       executable,
       prompt,
       cwd,
       schema,
       systemPrompt,
       permissionMode: 'plan',
-      model: settings.model,
+      model: '',
       timeoutMs,
       proxy: proxyInfo(),
+      label: 'acceptance',
     })
-    return run.promise
   }
 
   // The automatic (1.0.1-style) gate is opt-in via acceptance.legacyGate.
@@ -927,6 +1011,9 @@ export function apply(ctx, config = {}) {
     const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(60_000))
     const workspace = inspected.meta && inspected.meta.cwd
     if (!workspace) throw userError('会话缺少 workspace，无法验收', '', 400)
+    if (!isDir(workspace)) {
+      throw userError(`项目目录不存在：${workspace}`, '请先恢复项目目录再验收。', 400)
+    }
     return executeAcceptance({
       sessionId,
       meta: inspected.meta,
@@ -1039,7 +1126,7 @@ export function apply(ctx, config = {}) {
     }
     const executable = findCli(settings.claudeCliPath)
     if (!executable) throw userError('没有找到 Claude Code CLI，无法生成验收意见', '', 500)
-    const run = startClaudeRun({
+    const result = await runClaudeFor({
       executable,
       prompt,
       cwd: workspace,
@@ -1048,9 +1135,9 @@ export function apply(ctx, config = {}) {
       model: 'haiku',
       timeoutMs: 120_000,
       proxy: proxyInfo(),
+      label: 'review',
     })
-    const result = await run.promise
-    return result.data
+    return { ...result.data, claudeSessionId: result.claudeSessionId || '' }
   }
 
   const reviewPrompt = attachReviewPrompt({
@@ -1070,6 +1157,13 @@ export function apply(ctx, config = {}) {
     const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(60_000))
     const workspace = inspected.meta && inspected.meta.cwd
     if (!workspace) throw userError('会话缺少 workspace，无法读取项目', '', 400)
+    if (!isDir(workspace)) {
+      throw userError(
+        `项目目录不存在：${workspace}`,
+        '该会话的原项目目录可能已被移动或删除，请选择其他会话。',
+        400,
+      )
+    }
     const facts = await buildFacts({
       sessionId,
       meta: inspected.meta,
@@ -1124,26 +1218,28 @@ export function apply(ctx, config = {}) {
     let question = ''
     let brief = ''
     let choices = []
+    let claudeSessionId = ''
     const executable = findCli(settings.claudeCliPath)
     if (executable) {
       try {
-        const run = startClaudeRun({
+        const result = await runClaudeFor({
           executable,
           prompt,
           cwd: workspace,
           schema,
           permissionMode: 'plan',
-          model: settings.model || 'haiku',
+          model: 'haiku',
           timeoutMs: 120_000,
           proxy: proxyInfo(),
+          label: 'first-question',
         })
-        const result = await run.promise
         understanding = text(result.data.understanding).trim()
         question = text(result.data.question).trim()
         brief = text(result.data.brief).trim()
         choices = Array.isArray(result.data.choices)
           ? result.data.choices.map((choice) => text(choice).trim()).filter(Boolean).slice(0, 4)
           : []
+        claudeSessionId = result.claudeSessionId || (result.meta && result.meta.sessionId) || ''
       } catch (error) {
         try {
           ctx.logger?.warn?.(
@@ -1177,6 +1273,7 @@ export function apply(ctx, config = {}) {
         title: path.basename(workspace),
         sessionId,
         projectDir: workspace,
+        claudeSessionId,
         content: [
           'Claude 首问',
           `项目：${workspace}`,
@@ -1200,6 +1297,7 @@ export function apply(ctx, config = {}) {
       brief,
       choices,
       draft,
+      claudeSessionId,
       sent: false,
     })
   }
@@ -1278,6 +1376,7 @@ export function apply(ctx, config = {}) {
         title: text(title).trim() || path.basename(workspace || ''),
         sessionId,
         projectDir: workspace,
+        claudeSessionId: await currentClaudeSessionId(workspace),
         content: message,
       })
     } catch (error) {
@@ -1506,7 +1605,7 @@ export function apply(ctx, config = {}) {
     if (kind === 'brief') {
       const goal = text(payload.goal).trim()
       if (goal.length < 4) throw userError('请先描述项目目标', '目标越具体，首问越准确。', 400)
-      return startClaudeRun({
+      return runClaudeFor({
         executable: exe,
         prompt: buildBriefPrompt({
           projectName: text(payload.projectName).trim(),
@@ -1517,16 +1616,17 @@ export function apply(ctx, config = {}) {
         schema: BRIEF_SCHEMA,
         systemPrompt: COMMANDER_SYSTEM,
         permissionMode,
-        model: settings.model,
+        model: '',
         timeoutMs: settings.timeoutMs,
         proxy,
+        label: 'plan',
       })
     }
 
     const answer = text(payload.answer).trim()
     if (answer.length < 1) throw userError('请先回答 Claude 的首问', '', 400)
     const brief = payload.brief && typeof payload.brief === 'object' ? payload.brief : {}
-    return startClaudeRun({
+    return runClaudeFor({
       executable: exe,
       prompt: buildRefinePrompt({
         projectName: text(payload.projectName).trim(),
@@ -1539,9 +1639,10 @@ export function apply(ctx, config = {}) {
       schema: REFINE_SCHEMA,
       systemPrompt: COMMANDER_SYSTEM,
       permissionMode,
-      model: settings.model,
+      model: '',
       timeoutMs: settings.timeoutMs,
       proxy,
+      label: 'refine',
     })
   }
 
@@ -1623,6 +1724,7 @@ export function apply(ctx, config = {}) {
         title: workspace.title,
         sessionId: created.sessionId,
         projectDir,
+        claudeSessionId: await currentClaudeSessionId(projectDir),
         content: brief,
       })
     } catch (error) {
@@ -2081,7 +2183,7 @@ export function apply(ctx, config = {}) {
         let title = ''
         if (executable) {
           try {
-            const run = startClaudeRun({
+            const result = await runClaudeFor({
               executable,
               prompt,
               cwd: dir,
@@ -2090,8 +2192,8 @@ export function apply(ctx, config = {}) {
               model: 'haiku',
               timeoutMs: 120_000,
               proxy: proxyInfo(),
+              label: 'acceptance-brief',
             })
-            const result = await run.promise
             brief = text(result.data.brief).trim()
             title = text(result.data.title).trim()
           } catch {}
@@ -2167,6 +2269,7 @@ export function apply(ctx, config = {}) {
             title: title || sessionId,
             sessionId,
             projectDir,
+            claudeSessionId: await currentClaudeSessionId(projectDir),
             content: message,
           })
         } catch (error) {
@@ -2244,6 +2347,17 @@ export function apply(ctx, config = {}) {
           title,
           message,
         )
+      }),
+    },
+    {
+      path: '/claude-sessions',
+      methods: ['GET'],
+      handler: endpoint(async () => {
+        const sessions = await readClaudeSessions()
+        const items = Object.entries(sessions)
+          .map(([key, value]) => ({ key, ...value }))
+          .sort((a, b) => (b.at || 0) - (a.at || 0))
+        return json({ items })
       }),
     },
     {
