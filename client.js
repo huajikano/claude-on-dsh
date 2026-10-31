@@ -87,6 +87,12 @@ window.__ModuleLoader__.load({
         acceptanceOpinion: '验收意见（可选）',
         acceptanceOpinionPlaceholder: '例如：重点检查移动端、不要改样式；只看本次改动。',
         acceptanceStart: '开始验收',
+        acceptanceGenerate: '生成验收内容',
+        acceptanceSendDsh: '发送给 DSH',
+        acceptanceDraft: '发送给 DSH 的验收内容（可编辑）',
+        acceptanceDraftHint: '这是 Claude 生成的验收任务书；发送前可以直接修改。',
+        acceptanceDraftPlaceholder: '将发回原 DSH 会话的验收内容',
+        acceptanceDraftRequired: '验收内容不能为空',
         acceptanceCancel: '取消',
         acceptanceDone: '验收完成',
         firstQuestion: '首问',
@@ -255,6 +261,12 @@ window.__ModuleLoader__.load({
         acceptanceOpinion: 'Acceptance notes (optional)',
         acceptanceOpinionPlaceholder: 'e.g. focus on mobile, do not change styles, only this change.',
         acceptanceStart: 'Start acceptance',
+        acceptanceGenerate: 'Generate acceptance content',
+        acceptanceSendDsh: 'Send to DSH',
+        acceptanceDraft: 'Acceptance message to DSH (editable)',
+        acceptanceDraftHint: 'Claude generated this acceptance brief; edit it before sending.',
+        acceptanceDraftPlaceholder: 'The acceptance content sent back to the original DSH conversation',
+        acceptanceDraftRequired: 'Acceptance content must not be empty',
         acceptanceCancel: 'Cancel',
         acceptanceDone: 'Acceptance complete',
         firstQuestion: 'First question',
@@ -650,6 +662,7 @@ window.__ModuleLoader__.load({
         dispatchTask,
         archiveTask,
         dispatchAcceptance,
+        sendAcceptanceDispatch,
         runClaudeAcceptance,
         askFirstQuestion,
         sendFirstQuestion,
@@ -1213,7 +1226,17 @@ window.__ModuleLoader__.load({
 
       function openAcceptanceDialog(entry) {
         if (!entry || !entry.sessionId) return
-        setDialog({ entry, mode: 'claude', opinion: '', busy: false, result: null, error: '' })
+        setDialog({
+          entry,
+          mode: 'claude',
+          opinion: '',
+          busy: false,
+          result: null,
+          error: '',
+          generated: null,
+          draft: '',
+          draftEdited: false,
+        })
       }
 
       async function confirmAcceptance() {
@@ -1222,10 +1245,37 @@ window.__ModuleLoader__.load({
         setDialog((current) => (current ? { ...current, busy: true, error: '' } : current))
         try {
           if (mode === 'dsh') {
-            const data = await dispatchAcceptance({
-              projectDir: entry.projectDir || form.projectDir,
+            if (!dialog.generated) {
+              const data = await dispatchAcceptance({
+                projectDir: entry.projectDir || form.projectDir,
+                sessionId: entry.sessionId,
+                opinion,
+              })
+              setDialog((current) =>
+                current
+                  ? {
+                      ...current,
+                      busy: false,
+                      error: '',
+                      generated: data,
+                      draft: String(data.brief || ''),
+                      draftEdited: false,
+                    }
+                  : current,
+              )
+              return
+            }
+            if (!dialog.draft.trim()) {
+              setDialog((current) =>
+                current
+                  ? { ...current, busy: false, error: tt('acceptanceDraftRequired') }
+                  : current,
+              )
+              return
+            }
+            const data = await sendAcceptanceDispatch({
               sessionId: entry.sessionId,
-              opinion,
+              message: dialog.draft,
             })
             setToast(tt('dshAcceptOpened'))
             setDialog(null)
@@ -2166,7 +2216,9 @@ window.__ModuleLoader__.load({
                   `${tt('acceptance')}：${dialog.entry.title || dialog.entry.sessionId}`,
                 ),
                 h('div', { className: 'cc-inlineWarn' }, tt('acceptanceCostWarn')),
-                h(
+                dialog.mode === 'dsh' && dialog.generated
+                  ? null
+                  : h(
                   'div',
                   { className: 'cc-seg' },
                   h(
@@ -2176,7 +2228,17 @@ window.__ModuleLoader__.load({
                       className: dialog.mode === 'claude' ? 'on' : '',
                       onClick: () =>
                         setDialog((current) =>
-                          current ? { ...current, mode: 'claude', result: null, error: '' } : current,
+                          current
+                            ? {
+                                ...current,
+                                mode: 'claude',
+                                result: null,
+                                error: '',
+                                generated: null,
+                                draft: '',
+                                draftEdited: false,
+                              }
+                            : current,
                         ),
                     },
                     tt('acceptanceModeClaude'),
@@ -2188,13 +2250,25 @@ window.__ModuleLoader__.load({
                       className: dialog.mode === 'dsh' ? 'on' : '',
                       onClick: () =>
                         setDialog((current) =>
-                          current ? { ...current, mode: 'dsh', result: null, error: '' } : current,
+                          current
+                            ? {
+                                ...current,
+                                mode: 'dsh',
+                                result: null,
+                                error: '',
+                                generated: null,
+                                draft: '',
+                                draftEdited: false,
+                              }
+                            : current,
                         ),
                     },
                     tt('acceptanceModeDsh'),
                   ),
                 ),
-                h(
+                dialog.mode === 'dsh' && dialog.generated
+                  ? null
+                  : h(
                   'label',
                   { className: 'cc-field' },
                   h('span', { className: 'cc-label' }, tt('acceptanceOpinion')),
@@ -2209,6 +2283,26 @@ window.__ModuleLoader__.load({
                       ),
                   }),
                 ),
+                dialog.mode === 'dsh' && dialog.generated
+                  ? h(
+                      'label',
+                      { className: 'cc-field cc-draftField' },
+                      h('span', { className: 'cc-label' }, tt('acceptanceDraft')),
+                      h('div', { className: 'cc-hint' }, tt('acceptanceDraftHint')),
+                      h('textarea', {
+                        className: 'cc-textarea cc-draft',
+                        rows: 10,
+                        value: dialog.draft,
+                        placeholder: tt('acceptanceDraftPlaceholder'),
+                        onChange: (event) =>
+                          setDialog((current) =>
+                            current
+                              ? { ...current, draft: event.target.value, draftEdited: true }
+                              : current,
+                          ),
+                      }),
+                    )
+                  : null,
                 dialog.error
                   ? h('div', { className: 'cc-notice' }, h('div', { className: 'cc-noticeBody' }, dialog.error))
                   : null,
@@ -2232,7 +2326,13 @@ window.__ModuleLoader__.load({
                   h(
                     Button,
                     { variant: 'primary', busy: dialog.busy, disabled: dialog.busy, onClick: confirmAcceptance },
-                    dialog.busy ? tt('acceptanceRunning') : tt('acceptanceStart'),
+                    dialog.busy
+                      ? tt('acceptanceRunning')
+                      : dialog.mode === 'dsh'
+                        ? dialog.generated
+                          ? tt('acceptanceSendDsh')
+                          : tt('acceptanceGenerate')
+                        : tt('acceptanceStart'),
                   ),
                   h(
                     Button,
@@ -2298,6 +2398,12 @@ window.__ModuleLoader__.load({
             method: 'POST',
             body: JSON.stringify(payload),
             timeoutMs: 180_000,
+          }),
+        sendAcceptanceDispatch: (payload) =>
+          request('/acceptance/dispatch/send', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            timeoutMs: 90_000,
           }),
         runClaudeAcceptance: (payload) =>
           request('/acceptance/claude', {

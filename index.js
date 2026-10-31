@@ -1974,7 +1974,7 @@ export function apply(ctx, config = {}) {
               cwd: dir,
               schema,
               permissionMode: 'plan',
-              model: settings.model,
+              model: 'haiku',
               timeoutMs: 120_000,
               proxy: proxyInfo(),
             })
@@ -1997,9 +1997,27 @@ export function apply(ctx, config = {}) {
             `4. 把验收报告写入 ${reportPath}，并在会话中给出结论与关键证据。`,
           ].join('\n')
         }
-        // Acceptance belongs to the ORIGINAL DSH conversation created by the
-        // Claude first question: send the brief back there, never to a new
-        // session or workspace.
+        // Acceptance belongs to the ORIGINAL DSH conversation. Show the
+        // generated brief for editing first; sending is a separate action.
+        return json({
+          sessionId,
+          workspaceTitle: path.basename(dir),
+          title,
+          brief,
+          reportPath,
+          sent: false,
+        })
+      }),
+    },
+    {
+      path: '/acceptance/dispatch/send',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        const sessionId = text(body.sessionId).trim()
+        const message = text(body.message).trim()
+        if (!sessionId) throw userError('缺少要验收的 DSH 会话')
+        if (!message) throw userError('发送内容为空', '请先生成或填写验收内容。', 400)
         let live = ctx.sessions.get(sessionId)
         let resolvedAgent
         if (!live) {
@@ -2023,19 +2041,12 @@ export function apply(ctx, config = {}) {
             sessionId,
             requestId: randomUUID(),
             mode: 'queue',
-            content: [{ type: 'text', text: brief }],
+            content: [{ type: 'text', text: message }],
             clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           },
           AbortSignal.timeout(60_000),
         )
-        return json({
-          sessionId,
-          workspaceTitle: path.basename(dir),
-          title,
-          brief,
-          reportPath,
-          reused: true,
-        })
+        return json({ sessionId, sent: true })
       }),
     },
     {
