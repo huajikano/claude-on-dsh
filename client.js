@@ -110,6 +110,9 @@ window.__ModuleLoader__.load({
         recordsDelete: '删除',
         recordsDeleteYes: '确认删除',
         recordsDeleteNo: '取消',
+        reviewList: '验收记录',
+        reviewListEmpty: '还没有验收记录。',
+        recordContents: '首问 / 派发内容',
         sessionReset: '重置',
         sessionResetConfirm: '重置当前 Claude 会话映射？下次 Claude 调用会新建会话，旧会话文件保留。',
         sessionResetDone: '已重置 Claude 会话',
@@ -121,6 +124,7 @@ window.__ModuleLoader__.load({
         defaultActionClaude: '自动交给 Claude 验收',
         dailyBudgetLabel: '每日 Claude 预算（$）',
         dailyBudgetHint: '0 表示不限；达到预算后只停自动验收，手动仍可继续。',
+        advancedSettings: '预算与高级设置',
         firstQuestionHint: 'Claude 会读取该对话与项目，然后把首问发回这个对话；点「发送首问」才会消耗额度。',
         firstQuestionRequirement: '新要求',
         firstQuestionPlaceholder: '例如：在现有流程上增加并行分支，保持旧数据不丢。',
@@ -302,6 +306,9 @@ window.__ModuleLoader__.load({
         recordsDelete: 'Delete',
         recordsDeleteYes: 'Confirm delete',
         recordsDeleteNo: 'Cancel',
+        reviewList: 'Acceptance records',
+        reviewListEmpty: 'No acceptance records yet.',
+        recordContents: 'First-question / handoff content',
         sessionReset: 'Reset',
         sessionResetConfirm: 'Reset the current Claude session mapping? The next Claude call starts a new session; old session files stay.',
         sessionResetDone: 'Claude session reset',
@@ -313,6 +320,7 @@ window.__ModuleLoader__.load({
         defaultActionClaude: 'Hand to Claude automatically',
         dailyBudgetLabel: 'Daily Claude budget ($)',
         dailyBudgetHint: '0 means unlimited; reaching it stops automatic review only, manual runs still work.',
+        advancedSettings: 'Budget & advanced',
         firstQuestionHint: 'Claude reads this conversation and project, then posts its first question back here. Credits are spent only when you send.',
         firstQuestionRequirement: 'New requirement',
         firstQuestionPlaceholder: 'e.g. add parallel branches to the existing flow without losing old data.',
@@ -862,6 +870,7 @@ window.__ModuleLoader__.load({
         deleteClaudeSession,
         resetClaudeSession,
         getUsage,
+        getReviews,
       } = props
       const tt = useCallback(
         (key, vars) => {
@@ -921,6 +930,8 @@ window.__ModuleLoader__.load({
       const [deleteConfirmKey, setDeleteConfirmKey] = useState('')
       const [deletingKey, setDeletingKey] = useState('')
       const [recordSelected, setRecordSelected] = useState(null)
+      const [reviewEntries, setReviewEntries] = useState([])
+      const [reviewSelected, setReviewSelected] = useState(null)
       const [recordBusy, setRecordBusy] = useState(false)
       const [recordError, setRecordError] = useState('')
       const [reviewSettings, setReviewSettings] = useState({
@@ -1341,12 +1352,14 @@ window.__ModuleLoader__.load({
       async function openRecords() {
         setRecordsOpen(true)
         setRecordSelected(null)
+        setReviewSelected(null)
         setRecordBusy(true)
         setRecordError('')
         try {
-          const [recordsResult, sessionsResult] = await Promise.allSettled([
+          const [recordsResult, sessionsResult, reviewsResult] = await Promise.allSettled([
             listRecords(),
             listClaudeSessions(),
+            getReviews(),
           ])
           if (recordsResult.status === 'fulfilled') {
             setRecordItems(
@@ -1358,6 +1371,11 @@ window.__ModuleLoader__.load({
           if (sessionsResult.status === 'fulfilled') {
             setClaudeSessions(
               Array.isArray(sessionsResult.value.items) ? sessionsResult.value.items : [],
+            )
+          }
+          if (reviewsResult.status === 'fulfilled') {
+            setReviewEntries(
+              Array.isArray(reviewsResult.value.entries) ? reviewsResult.value.entries : [],
             )
           }
         } catch (error) {
@@ -1397,6 +1415,7 @@ window.__ModuleLoader__.load({
       function closeRecords() {
         setRecordsOpen(false)
         setRecordSelected(null)
+        setReviewSelected(null)
       }
 
       function openCurrentFirstQuestion() {
@@ -2301,30 +2320,39 @@ window.__ModuleLoader__.load({
             ),
           ),
           h(
-            'label',
-            { className: 'cc-field cc-budgetField' },
-            h('span', { className: 'cc-label' }, tt('dailyBudgetLabel')),
-            h('input', {
-              className: 'cc-input',
-              type: 'number',
-              min: 0,
-              step: 0.5,
-              value: reviewSettings.dailyBudgetUsd,
-              onChange: (event) => {
-                const value = Number(event.target.value)
-                const next = Number.isFinite(value) && value >= 0 ? value : 0
-                setReviewSettings((current) => ({ ...current, dailyBudgetUsd: next }))
-                saveSettings({ dailyBudgetUsd: next }).catch(() => {})
-                refreshUsage()
-              },
-            }),
-            h('span', { className: 'cc-hint' }, tt('dailyBudgetHint')),
+            'details',
+            { className: 'cc-advanced' },
+            h('summary', null, tt('advancedSettings')),
+            h(
+              'label',
+              { className: 'cc-field cc-budgetField' },
+              h('span', { className: 'cc-label' }, tt('dailyBudgetLabel')),
+              h('input', {
+                className: 'cc-input',
+                type: 'number',
+                min: 0,
+                step: 0.5,
+                value: reviewSettings.dailyBudgetUsd,
+                onChange: (event) => {
+                  const value = Number(event.target.value)
+                  const next = Number.isFinite(value) && value >= 0 ? value : 0
+                  setReviewSettings((current) => ({ ...current, dailyBudgetUsd: next }))
+                  saveSettings({ dailyBudgetUsd: next }).catch(() => {})
+                  refreshUsage()
+                },
+              }),
+              h('span', { className: 'cc-hint' }, tt('dailyBudgetHint')),
+            ),
           ),
         ),
         h(
-          'div',
-          { className: 'cc-history' },
-          h('div', { className: 'cc-sectionTitle' }, tt('history')),
+          'details',
+          { className: 'cc-historyDetails' },
+          h('summary', null, `${tt('history')}（${history.length}）`),
+          h(
+            'div',
+            { className: 'cc-history' },
+            h('div', { className: 'cc-sectionTitle' }, tt('history')),
           history.length === 0
             ? h('div', { className: 'cc-hint' }, tt('historyEmpty'))
             : h(
@@ -2390,6 +2418,7 @@ window.__ModuleLoader__.load({
                   )
                 }),
               ),
+          ),
         ),
         firstQuestion
           ? h(
@@ -2767,7 +2796,56 @@ window.__ModuleLoader__.load({
           ? h(
               Modal,
               { title: tt('records'), onClose: closeRecords },
-              recordSelected
+              reviewSelected
+                ? h(
+                    'div',
+                    { className: 'cc-recordView' },
+                    h(
+                      'div',
+                      { className: 'cc-actions' },
+                      h(
+                        Button,
+                        { variant: 'link', onClick: () => setReviewSelected(null) },
+                        tt('recordsBack'),
+                      ),
+                    ),
+                    h(
+                      'div',
+                      { className: 'cc-recordMeta' },
+                      `${String(reviewSelected.verdict || 'uncertain').toUpperCase()} · ${
+                        reviewSelected.source === 'acceptance' ? '直接验收' : '回合后意见'
+                      } · ${timeAgo(reviewSelected.at, tt)}`,
+                    ),
+                    h(
+                      'div',
+                      { className: 'cc-recordMeta' },
+                      `会话：${reviewSelected.sessionId || ''} · 消息：${reviewSelected.messageId || ''}`,
+                    ),
+                    h(
+                      'div',
+                      { className: 'cc-reviewOpinion' },
+                      reviewSelected.opinion || reviewSelected.reason || '',
+                    ),
+                    Array.isArray(reviewSelected.evidence) && reviewSelected.evidence.length
+                      ? h(
+                          'div',
+                          null,
+                          h('div', { className: 'cc-label' }, '关键证据'),
+                          h(
+                            'ul',
+                            { className: 'cc-reviewEvidence' },
+                            reviewSelected.evidence.map((item, index) =>
+                              h(
+                                'li',
+                                { key: `${index}-${String(item).slice(0, 16)}` },
+                                item,
+                              ),
+                            ),
+                          ),
+                        )
+                      : null,
+                  )
+                : recordSelected
                 ? h(
                     'div',
                     { className: 'cc-recordView' },
@@ -2865,6 +2943,50 @@ window.__ModuleLoader__.load({
                               ),
                             ),
                           ),
+                    ),
+                    h(
+                      'div',
+                      { className: 'cc-sectionTitle' },
+                      `${tt('reviewList')}（${reviewEntries.length}）`,
+                    ),
+                    reviewEntries.length === 0
+                      ? h('div', { className: 'cc-hint' }, tt('reviewListEmpty'))
+                      : reviewEntries.slice(0, 12).map((item) =>
+                          h(
+                            'button',
+                            {
+                              type: 'button',
+                              className: 'cc-reviewListItem',
+                              key: item.messageId,
+                              onClick: () => setReviewSelected(item),
+                            },
+                            h(
+                              'span',
+                              {
+                                className: `cc-reviewBadge ${
+                                  ['pass', 'fail', 'uncertain'].includes(item.verdict)
+                                    ? item.verdict
+                                    : 'uncertain'
+                                }`,
+                              },
+                              h(
+                                'span',
+                                { className: 'cc-reviewBadgeVerdict' },
+                                String(item.verdict || 'uncertain').toUpperCase(),
+                              ),
+                            ),
+                            h(
+                              'span',
+                              { className: 'cc-recordTitle' },
+                              item.reason || item.source || '',
+                            ),
+                            h('span', { className: 'cc-recordTime' }, timeAgo(item.at, tt)),
+                          ),
+                        ),
+                    h(
+                      'div',
+                      { className: 'cc-sectionTitle' },
+                      `${tt('recordContents')}（${recordItems.length}）`,
                     ),
                     recordError
                       ? h(
@@ -2988,6 +3110,7 @@ window.__ModuleLoader__.load({
           }),
         listSessions: () => request('/sessions'),
         listRecords: () => request('/records'),
+        getReviews: () => request('/reviews'),
         listClaudeSessions: () => request('/claude-sessions'),
         getUsage: () => request('/usage'),
         deleteClaudeSession: (payload) =>
@@ -3133,6 +3256,16 @@ window.__ModuleLoader__.load({
   background: var(--dsw-alias-bg-base); font-size: 12px; line-height: 1.65;
 }
 .cc-reviewEvidence { margin: 6px 0 0; padding-inline-start: 18px; color: var(--dsw-alias-label-secondary); font-size: 11.5px; }
+.cc-advanced { margin-block-start: 2px; }
+.cc-advanced > summary {
+  cursor: pointer; font-size: 11.5px; color: var(--dsw-alias-label-secondary);
+  padding-block: 3px;
+}
+.cc-advanced .cc-budgetField { margin-block-start: 8px; }
+.cc-historyDetails > summary {
+  cursor: pointer; font-size: 12px; font-weight: 500; color: var(--dsw-alias-label-secondary);
+  padding-block: 4px;
+}
 .cc-budgetChip {
   display: inline-flex; align-items: center; height: 24px; padding: 0 9px;
   border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px;
@@ -3458,6 +3591,14 @@ window.__ModuleLoader__.load({
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-inline-size: 230px;
 }
 .cc-recordList { display: flex; flex-direction: column; gap: 5px; max-block-size: 60vh; overflow: auto; }
+.cc-reviewListItem {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center;
+  gap: 10px; inline-size: 100%; padding: 7px 8px; cursor: pointer; text-align: start;
+  border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px;
+  background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit;
+}
+.cc-reviewListItem:hover { background: var(--dsw-alias-bg-layer-2); }
+.cc-reviewListItem .cc-reviewBadge { pointer-events: none; }
 .cc-recordItem {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center;
   gap: 10px; inline-size: 100%; padding: 9px 10px; cursor: pointer; text-align: start;

@@ -1279,7 +1279,7 @@ export function apply(ctx, config = {}) {
   }
 
   async function runReview({ sessionId, meta, events, workspace, custom }) {
-    const facts = buildFacts({ sessionId, meta, events, workspace })
+    const facts = await buildFacts({ sessionId, meta, events, workspace })
     const context = [
       `项目目录：${workspace}`,
       `任务全文：${facts.task.summary || '未识别'}`,
