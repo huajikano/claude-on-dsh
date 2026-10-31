@@ -107,6 +107,9 @@ window.__ModuleLoader__.load({
         recordAcceptance: '验收',
         claudeSessions: '插件创建的 Claude 会话',
         claudeSessionsEmpty: '还没有记录到 Claude CLI 会话。',
+        recordsDelete: '删除',
+        recordsDeleteYes: '确认删除',
+        recordsDeleteNo: '取消',
         reviewSettings: 'DSH 完成后的验收',
         reviewSettingsHint: '开启后，DSH 每轮结束会在原会话里出现验收选项；默认项也可以设成直接交给 Claude。',
         autoPromptToggle: 'DSH 完成后自动出现验收选项',
@@ -291,6 +294,9 @@ window.__ModuleLoader__.load({
         recordAcceptance: 'Acceptance',
         claudeSessions: 'Claude CLI sessions created by this plugin',
         claudeSessionsEmpty: 'No Claude CLI sessions recorded yet.',
+        recordsDelete: 'Delete',
+        recordsDeleteYes: 'Confirm delete',
+        recordsDeleteNo: 'Cancel',
         reviewSettings: 'Acceptance after DSH',
         reviewSettingsHint: 'When enabled, a review choice appears in the original DSH conversation after each turn; the default can hand it straight to Claude.',
         autoPromptToggle: 'Show the review choice after DSH finishes',
@@ -693,6 +699,7 @@ window.__ModuleLoader__.load({
         listRecords,
         readRecord,
         listClaudeSessions,
+        deleteClaudeSession,
       } = props
       const tt = useCallback(
         (key, vars) => {
@@ -743,6 +750,8 @@ window.__ModuleLoader__.load({
       const [recordsOpen, setRecordsOpen] = useState(false)
       const [recordItems, setRecordItems] = useState([])
       const [claudeSessions, setClaudeSessions] = useState([])
+      const [deleteConfirmKey, setDeleteConfirmKey] = useState('')
+      const [deletingKey, setDeletingKey] = useState('')
       const [recordSelected, setRecordSelected] = useState(null)
       const [recordBusy, setRecordBusy] = useState(false)
       const [recordError, setRecordError] = useState('')
@@ -1175,6 +1184,20 @@ window.__ModuleLoader__.load({
           setRecordError(error.message)
         } finally {
           setRecordBusy(false)
+        }
+      }
+
+      async function removeClaudeSession(key) {
+        setDeletingKey(key)
+        setRecordError('')
+        try {
+          await deleteClaudeSession({ key })
+          setClaudeSessions((current) => current.filter((item) => item.key !== key))
+          setDeleteConfirmKey('')
+        } catch (error) {
+          setRecordError(error.message)
+        } finally {
+          setDeletingKey('')
         }
       }
 
@@ -2489,6 +2512,40 @@ window.__ModuleLoader__.load({
                               ),
                               h('code', { className: 'cc-claudeSessionId' }, item.sessionId),
                               h('span', { className: 'cc-recordTime' }, timeAgo(item.at, tt)),
+                              h(
+                                'div',
+                                { className: 'cc-claudeSessionActions' },
+                                deleteConfirmKey === item.key
+                                  ? h(
+                                      React.Fragment,
+                                      null,
+                                      h(
+                                        Button,
+                                        {
+                                          variant: 'link',
+                                          busy: deletingKey === item.key,
+                                          onClick: () => removeClaudeSession(item.key),
+                                        },
+                                        tt('recordsDeleteYes'),
+                                      ),
+                                      h(
+                                        Button,
+                                        {
+                                          variant: 'link',
+                                          onClick: () => setDeleteConfirmKey(''),
+                                        },
+                                        tt('recordsDeleteNo'),
+                                      ),
+                                    )
+                                  : h(
+                                      Button,
+                                      {
+                                        variant: 'link',
+                                        onClick: () => setDeleteConfirmKey(item.key),
+                                      },
+                                      tt('recordsDelete'),
+                                    ),
+                              ),
                             ),
                           ),
                     ),
@@ -2602,6 +2659,11 @@ window.__ModuleLoader__.load({
         listSessions: () => request('/sessions'),
         listRecords: () => request('/records'),
         listClaudeSessions: () => request('/claude-sessions'),
+        deleteClaudeSession: (payload) =>
+          request('/claude-session/delete', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          }),
         readRecord: (id) => request(`/record?id=${encodeURIComponent(id)}`),
         getSettings: () => request('/settings'),
         saveSettings: (patch) =>
@@ -2996,9 +3058,10 @@ window.__ModuleLoader__.load({
   cursor: pointer; font-size: 11.5px; color: var(--dsw-alias-label-secondary);
 }
 .cc-claudeSession {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center;
   gap: 8px; padding: 5px 2px; border-block-start: 1px solid var(--dsw-alias-border-l1);
 }
+.cc-claudeSessionActions { display: flex; align-items: center; gap: 4px; }
 .cc-claudeSessionId {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 10.5px; color: var(--dsw-alias-label-secondary);

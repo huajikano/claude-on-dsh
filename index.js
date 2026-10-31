@@ -13,7 +13,7 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -865,6 +865,58 @@ function rememberClaudeSession(key, entry) {
   return task
 }
 
+function forgetClaudeSession(key) {
+  const task = claudeSessionsWrite.then(async () => {
+    const sessions = await readClaudeSessions()
+    delete sessions[key]
+    const file = claudeSessionsFile()
+    await mkdir(path.dirname(file), { recursive: true })
+    const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`
+    await writeFile(temporary, `${JSON.stringify(sessions, null, 2)}\n`, 'utf8')
+    await rename(temporary, file)
+  })
+  claudeSessionsWrite = task.catch(() => {})
+  return task
+}
+
+async function deleteClaudeSessionFiles(sessionId) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) {
+    return 0
+  }
+  const root = path.join(os.homedir(), '.claude', 'projects')
+  let removed = 0
+  async function walk(dir) {
+    let entries
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory() && entry.name === sessionId) {
+        try {
+          await rm(full, { recursive: true, force: true })
+          removed += 1
+        } catch {}
+        continue
+      }
+      if (entry.isDirectory()) {
+        await walk(full)
+        continue
+      }
+      if (entry.isFile() && entry.name === `${sessionId}.jsonl`) {
+        try {
+          await unlink(full)
+          removed += 1
+        } catch {}
+      }
+    }
+  }
+  await walk(root)
+  return removed
+}
+
 /* ------------------------------------------------------------------ */
 /* plugin                                                              */
 /* ------------------------------------------------------------------ */
@@ -1306,10 +1358,10 @@ export function apply(ctx, config = {}) {
     const lines = ['[Claude 首问]']
     const request = text(requirement).trim()
     if (request) lines.push(`新要求：${request}`)
-    lines.push(`首问：${question}`)
-    lines.push(`用户回答：${answer}`)
     const background = text(brief).trim()
     if (background && background !== question.trim()) lines.push(`背景：${background}`)
+    lines.push(`首问：${question}`)
+    lines.push(`用户回答：${answer}`)
     lines.push('请据此继续推进；只有遇到无法从上下文推断的阻塞项才提问。')
     return lines.join('\n')
   }
@@ -2358,6 +2410,23 @@ export function apply(ctx, config = {}) {
           .map(([key, value]) => ({ key, ...value }))
           .sort((a, b) => (b.at || 0) - (a.at || 0))
         return json({ items })
+      }),
+    },
+    {
+      path: '/claude-session/delete',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        const key = text(body.key).trim()
+        if (!key) throw userError('缺少要删除的 Claude 会话', '', 400)
+        const sessions = await readClaudeSessions()
+        const entry = sessions[key]
+        if (!entry || !entry.sessionId) {
+          throw userError('Claude 会话不存在或已被删除', '', 404)
+        }
+        const files = await deleteClaudeSessionFiles(entry.sessionId)
+        await forgetClaudeSession(key)
+        return json({ deleted: true, files, sessionId: entry.sessionId })
       }),
     },
     {
