@@ -826,6 +826,111 @@ async function readContentRecord(id) {
 }
 
 /* ------------------------------------------------------------------ */
+/* review verdict feed (assistant message chips)                       */
+/* ------------------------------------------------------------------ */
+
+function reviewsFile() {
+  return path.join(dshHome(), 'claude-on-dsh', 'reviews.json')
+}
+
+async function readReviewFeed() {
+  try {
+    const parsed = JSON.parse((await readFile(reviewsFile(), 'utf8')).replace(/^\uFEFF/, ''))
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+let reviewFeedWrite = Promise.resolve()
+
+function writeReviewEntry(entry) {
+  const task = reviewFeedWrite.then(async () => {
+    const feed = await readReviewFeed()
+    if (entry.messageId) feed[entry.messageId] = entry
+    const entries = Object.values(feed)
+      .sort((a, b) => (b.at || 0) - (a.at || 0))
+      .slice(0, 300)
+    const next = Object.fromEntries(entries.map((item) => [item.messageId, item]))
+    const file = reviewsFile()
+    await mkdir(path.dirname(file), { recursive: true })
+    const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`
+    await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+    await rename(temporary, file)
+  })
+  reviewFeedWrite = task.catch(() => {})
+  return task
+}
+
+function latestAssistantMessageId(events) {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (!event || event.type !== 'assistant/message') continue
+    const id = event.data && event.data.message && event.data.message.id
+    if (id) return id
+  }
+  return ''
+}
+
+/* ------------------------------------------------------------------ */
+/* Claude CLI usage ledger                                             */
+/* ------------------------------------------------------------------ */
+
+function usageFile() {
+  return path.join(dshHome(), 'claude-on-dsh', 'usage.json')
+}
+
+function todayKey() {
+  return new Date().toLocaleDateString('en-CA')
+}
+
+async function readUsage() {
+  try {
+    const parsed = JSON.parse((await readFile(usageFile(), 'utf8')).replace(/^\uFEFF/, ''))
+    return parsed && typeof parsed === 'object' && parsed.days ? parsed : { days: {} }
+  } catch {
+    return { days: {} }
+  }
+}
+
+let usageWrite = Promise.resolve()
+
+function recordClaudeUsage(costUsd = 0, label = '') {
+  const task = usageWrite.then(async () => {
+    const usage = await readUsage()
+    const day = todayKey()
+    const current = usage.days[day] || { costUsd: 0, calls: 0, byLabel: {} }
+    current.costUsd = Number((current.costUsd + (Number(costUsd) || 0)).toFixed(6))
+    current.calls += 1
+    current.byLabel[label || 'other'] = (current.byLabel[label || 'other'] || 0) + 1
+    usage.days[day] = current
+    const keep = Object.keys(usage.days).sort().slice(-30)
+    usage.days = Object.fromEntries(keep.map((key) => [key, usage.days[key]]))
+    const file = usageFile()
+    await mkdir(path.dirname(file), { recursive: true })
+    const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`
+    await writeFile(temporary, `${JSON.stringify(usage, null, 2)}\n`, 'utf8')
+    await rename(temporary, file)
+  })
+  usageWrite = task.catch(() => {})
+  return task
+}
+
+async function usageSnapshot(budgetUsd) {
+  const usage = await readUsage()
+  const day = todayKey()
+  const current = usage.days[day] || { costUsd: 0, calls: 0, byLabel: {} }
+  const budget = Number(budgetUsd) || 0
+  return {
+    day,
+    costUsd: Number(current.costUsd) || 0,
+    calls: Number(current.calls) || 0,
+    budgetUsd: budget,
+    over: budget > 0 && Number(current.costUsd) >= budget,
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Claude CLI session registry                                         */
 /* ------------------------------------------------------------------ */
 
@@ -952,6 +1057,7 @@ export function apply(ctx, config = {}) {
     manualAcceptance: true,
     autoPrompt: true,
     defaultAction: 'none',
+    dailyBudgetUsd: 5,
   }
   try {
     Object.assign(
@@ -962,6 +1068,13 @@ export function apply(ctx, config = {}) {
   if (typeof acceptanceSettings.autoPrompt !== 'boolean') acceptanceSettings.autoPrompt = true
   if (!['claude', 'none'].includes(acceptanceSettings.defaultAction)) {
     acceptanceSettings.defaultAction = 'none'
+  }
+  if (
+    typeof acceptanceSettings.dailyBudgetUsd !== 'number' ||
+    !Number.isFinite(acceptanceSettings.dailyBudgetUsd) ||
+    acceptanceSettings.dailyBudgetUsd < 0
+  ) {
+    acceptanceSettings.dailyBudgetUsd = 5
   }
 
   const acceptanceOptions = {
@@ -981,6 +1094,11 @@ export function apply(ctx, config = {}) {
     return (sessions[projectKey(cwd)] && sessions[projectKey(cwd)].sessionId) || ''
   }
 
+  async function isOverBudget() {
+    const snapshot = await usageSnapshot(acceptanceSettings.dailyBudgetUsd)
+    return snapshot.over
+  }
+
   async function runClaudeFor({ cwd, label, ...options }) {    const key = projectKey(cwd)
     const sessions = await readClaudeSessions()
     let resume = sessions[key] && sessions[key].sessionId
@@ -989,6 +1107,12 @@ export function apply(ctx, config = {}) {
         const run = startClaudeRun({ ...options, cwd, resume })
         const result = await run.promise
         const sessionId = (result.meta && result.meta.sessionId) || resume
+        try {
+          await recordClaudeUsage(
+            (result.meta && result.meta.costUsd) || 0,
+            label || 'other',
+          )
+        } catch {}
         if (sessionId) {
           try {
             await rememberClaudeSession(key, {
@@ -1066,7 +1190,7 @@ export function apply(ctx, config = {}) {
     if (!isDir(workspace)) {
       throw userError(`项目目录不存在：${workspace}`, '请先恢复项目目录再验收。', 400)
     }
-    return executeAcceptance({
+    const result = await executeAcceptance({
       sessionId,
       meta: inspected.meta,
       events: inspected.events,
@@ -1082,6 +1206,34 @@ export function apply(ctx, config = {}) {
         }
       },
     })
+    const report = result && result.report
+    const messageId = latestAssistantMessageId(inspected.events)
+    if (report && messageId) {
+      const checks = Array.isArray(report.checks) ? report.checks : []
+      const summary = checks
+        .map((check) => `${check.name || check.id}: ${check.conclusion}`)
+        .join('\n')
+      try {
+        await writeReviewEntry({
+          messageId,
+          sessionId,
+          source: 'acceptance',
+          verdict: report.overall || 'uncertain',
+          reason:
+            summary.replace(/\s+/g, ' ').slice(0, 180) ||
+            `验收状态：${report.status || 'unknown'}`,
+          opinion: summary || JSON.stringify(report).slice(0, 20_000),
+          evidence: checks.flatMap((check) =>
+            (Array.isArray(check.evidence) ? check.evidence : [])
+              .map((item) => text(item && item.excerpt ? item.excerpt : item))
+              .filter(Boolean),
+          ).slice(0, 12),
+          at: Date.now(),
+          reportPath: result.paths && result.paths.jsonPath,
+        })
+      } catch {}
+    }
+    return result
   }
 
   const ACCEPTANCE_ID = /^session-[A-Za-z0-9-]+$/
@@ -1189,12 +1341,34 @@ export function apply(ctx, config = {}) {
       proxy: proxyInfo(),
       label: 'review',
     })
-    return { ...result.data, claudeSessionId: result.claudeSessionId || '' }
+    const data = result.data
+    const verdict = ['pass', 'fail', 'uncertain'].includes(data.verdict)
+      ? data.verdict
+      : 'uncertain'
+    const opinion = text(data.opinion).trim()
+    const evidence = Array.isArray(data.evidence) ? data.evidence.map((item) => text(item)) : []
+    const messageId = latestAssistantMessageId(events)
+    if (messageId && opinion) {
+      try {
+        await writeReviewEntry({
+          messageId,
+          sessionId,
+          source: 'review',
+          verdict,
+          reason: opinion.replace(/\s+/g, ' ').slice(0, 180),
+          opinion,
+          evidence: evidence.slice(0, 12),
+          at: Date.now(),
+        })
+      } catch {}
+    }
+    return { ...data, claudeSessionId: result.claudeSessionId || '', messageId }
   }
 
   const reviewPrompt = attachReviewPrompt({
     ctx,
     getSettings: () => acceptanceSettings,
+    isOverBudget,
     runReview,
     logger: (line) => {
       try {
@@ -2413,6 +2587,33 @@ export function apply(ctx, config = {}) {
       }),
     },
     {
+      path: '/usage',
+      methods: ['GET'],
+      handler: endpoint(async () => json(await usageSnapshot(acceptanceSettings.dailyBudgetUsd))),
+    },
+    {
+      path: '/reviews',
+      methods: ['GET'],
+      handler: endpoint(async () => {
+        const feed = await readReviewFeed()
+        const entries = Object.values(feed).sort((a, b) => (b.at || 0) - (a.at || 0))
+        return json({ entries })
+      }),
+    },
+    {
+      path: '/claude-session/reset',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        const key = text(body.key).trim()
+        if (!key) throw userError('缺少要重置的 Claude 会话', '', 400)
+        const sessions = await readClaudeSessions()
+        if (!sessions[key]) throw userError('Claude 会话不存在或已被删除', '', 404)
+        await forgetClaudeSession(key)
+        return json({ reset: true })
+      }),
+    },
+    {
       path: '/claude-session/delete',
       methods: ['POST'],
       handler: endpoint(async (request) => {
@@ -2461,6 +2662,13 @@ export function apply(ctx, config = {}) {
           }
           if (body.defaultAction === 'claude' || body.defaultAction === 'none') {
             acceptanceSettings.defaultAction = body.defaultAction
+          }
+          if (
+            typeof body.dailyBudgetUsd === 'number' &&
+            Number.isFinite(body.dailyBudgetUsd) &&
+            body.dailyBudgetUsd >= 0
+          ) {
+            acceptanceSettings.dailyBudgetUsd = body.dailyBudgetUsd
           }
           await mkdir(path.dirname(acceptanceSettingsFile), { recursive: true })
           await writeFile(

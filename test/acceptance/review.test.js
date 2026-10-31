@@ -5,7 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { attachReviewPrompt } from '../../lib/acceptance/review.js'
 
-function harness({ settings, answers, review }) {
+function harness({ settings, answers, review, overBudget = false }) {
   const handlers = new Map()
   const prompts = []
   const asks = []
@@ -43,6 +43,7 @@ function harness({ settings, answers, review }) {
   const service = attachReviewPrompt({
     ctx,
     getSettings: () => current,
+    isOverBudget: async () => overBudget,
     runReview: async () => review,
     logger: () => {},
   })
@@ -100,6 +101,19 @@ test('autoPrompt off does nothing', async () => {
     settings: { autoPrompt: false, defaultAction: 'claude' },
     answers: [],
     review: { verdict: 'pass', opinion: 'should not run', evidence: [] },
+  })
+  h.service.arm('session-review-test')
+  await idle(h)
+  assert.equal(h.asks.length, 0)
+  assert.equal(h.prompts.length, 0)
+})
+
+test('automatic Claude review stops when the daily budget is reached', async () => {
+  const h = harness({
+    settings: { autoPrompt: true, defaultAction: 'claude' },
+    answers: [],
+    review: { verdict: 'pass', opinion: 'should not run', evidence: [] },
+    overBudget: true,
   })
   h.service.arm('session-review-test')
   await idle(h)

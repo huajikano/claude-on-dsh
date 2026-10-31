@@ -110,12 +110,17 @@ window.__ModuleLoader__.load({
         recordsDelete: '删除',
         recordsDeleteYes: '确认删除',
         recordsDeleteNo: '取消',
+        sessionReset: '重置',
+        sessionResetConfirm: '重置当前 Claude 会话映射？下次 Claude 调用会新建会话，旧会话文件保留。',
+        sessionResetDone: '已重置 Claude 会话',
         reviewSettings: 'DSH 完成后的验收',
         reviewSettingsHint: '开启后，DSH 每轮结束会在原会话里出现验收选项；默认项也可以设成直接交给 Claude。',
         autoPromptToggle: 'DSH 完成后自动出现验收选项',
         defaultActionLabel: '默认项',
         defaultActionNone: '不设默认（每次弹出三选一）',
         defaultActionClaude: '自动交给 Claude 验收',
+        dailyBudgetLabel: '每日 Claude 预算（$）',
+        dailyBudgetHint: '0 表示不限；达到预算后只停自动验收，手动仍可继续。',
         firstQuestionHint: 'Claude 会读取该对话与项目，然后把首问发回这个对话；点「发送首问」才会消耗额度。',
         firstQuestionRequirement: '新要求',
         firstQuestionPlaceholder: '例如：在现有流程上增加并行分支，保持旧数据不丢。',
@@ -297,12 +302,17 @@ window.__ModuleLoader__.load({
         recordsDelete: 'Delete',
         recordsDeleteYes: 'Confirm delete',
         recordsDeleteNo: 'Cancel',
+        sessionReset: 'Reset',
+        sessionResetConfirm: 'Reset the current Claude session mapping? The next Claude call starts a new session; old session files stay.',
+        sessionResetDone: 'Claude session reset',
         reviewSettings: 'Acceptance after DSH',
         reviewSettingsHint: 'When enabled, a review choice appears in the original DSH conversation after each turn; the default can hand it straight to Claude.',
         autoPromptToggle: 'Show the review choice after DSH finishes',
         defaultActionLabel: 'Default',
         defaultActionNone: 'No default (show three choices)',
         defaultActionClaude: 'Hand to Claude automatically',
+        dailyBudgetLabel: 'Daily Claude budget ($)',
+        dailyBudgetHint: '0 means unlimited; reaching it stops automatic review only, manual runs still work.',
         firstQuestionHint: 'Claude reads this conversation and project, then posts its first question back here. Credits are spent only when you send.',
         firstQuestionRequirement: 'New requirement',
         firstQuestionPlaceholder: 'e.g. add parallel branches to the existing flow without losing old data.',
@@ -651,6 +661,156 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /* review chip on finalized assistant messages                      */
+
+    const REVIEW_FEED_URL = '/api/claude-on-dsh/reviews'
+    let reviewFeed = {}
+    let reviewSubs = new Set()
+    let reviewTimer = null
+    let reviewInFlight = false
+
+    function publishReviewFeed(next) {
+      reviewFeed = next
+      reviewSubs.forEach((callback) => {
+        try {
+          callback()
+        } catch {}
+      })
+    }
+
+    function reviewsChanged(previous, next) {
+      const keys = Object.keys(next)
+      if (keys.length !== Object.keys(previous).length) return true
+      return keys.some((key) => {
+        const a = previous[key]
+        const b = next[key]
+        return !a || a.at !== b.at || a.verdict !== b.verdict || a.reason !== b.reason
+      })
+    }
+
+    function fetchReviewFeed() {
+      if (reviewInFlight || typeof fetch !== 'function') return
+      reviewInFlight = true
+      fetch(REVIEW_FEED_URL, { cache: 'no-store' })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data) => {
+          if (!data || !Array.isArray(data.entries)) return
+          const next = {}
+          for (const entry of data.entries) {
+            if (entry && typeof entry.messageId === 'string') next[entry.messageId] = entry
+          }
+          if (reviewsChanged(reviewFeed, next)) publishReviewFeed(next)
+        })
+        .catch(() => {})
+        .finally(() => {
+          reviewInFlight = false
+        })
+    }
+
+    function startReviewFeed() {
+      if (reviewTimer !== null || typeof window === 'undefined') return
+      fetchReviewFeed()
+      reviewTimer = window.setInterval(fetchReviewFeed, 3000)
+      window.addEventListener('focus', fetchReviewFeed)
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) fetchReviewFeed()
+      })
+    }
+
+    function useReview(messageId) {
+      const [record, setRecord] = useState(null)
+      useEffect(() => {
+        if (!messageId) return undefined
+        const sync = () => setRecord(reviewFeed[messageId] || null)
+        reviewSubs.add(sync)
+        sync()
+        startReviewFeed()
+        return () => reviewSubs.delete(sync)
+      }, [messageId])
+      return record
+    }
+
+    function ReviewBadge(props) {
+      const messageId = props && props.messageId
+      const record = useReview(messageId)
+      const [open, setOpen] = useState(false)
+      if (!messageId || !record) return null
+      const verdict = ['pass', 'fail', 'uncertain'].includes(record.verdict)
+        ? record.verdict
+        : 'uncertain'
+      return h(
+        React.Fragment,
+        null,
+        h(
+          'button',
+          {
+            type: 'button',
+            className: `cc-reviewBadge ${verdict}`,
+            title: record.opinion || record.reason || '',
+            'data-claude-on-dsh-review': messageId,
+            onClick: () => setOpen(true),
+          },
+          h('span', { className: 'cc-reviewBadgeVerdict' }, verdict.toUpperCase()),
+          record.reason
+            ? h('span', { className: 'cc-reviewBadgeReason' }, record.reason)
+            : null,
+        ),
+        open
+          ? h(
+              'div',
+              { className: 'cc-modalBackdrop', onClick: () => setOpen(false) },
+              h(
+                'div',
+                {
+                  className: 'cc-modal cc-reviewModal',
+                  onClick: (event) => event.stopPropagation(),
+                },
+                h(
+                  'div',
+                  { className: 'cc-cardTitle' },
+                  `Claude 评审：${verdict.toUpperCase()}`,
+                ),
+                h(
+                  'div',
+                  { className: 'cc-hint' },
+                  `${record.source === 'acceptance' ? '直接验收' : '回合后意见'} · ${
+                    record.at ? new Date(record.at).toLocaleString() : ''
+                  }`,
+                ),
+                h(
+                  'div',
+                  { className: 'cc-reviewOpinion' },
+                  record.opinion || record.reason || '',
+                ),
+                Array.isArray(record.evidence) && record.evidence.length
+                  ? h(
+                      'div',
+                      null,
+                      h('div', { className: 'cc-label' }, '关键证据'),
+                      h(
+                        'ul',
+                        { className: 'cc-reviewEvidence' },
+                        record.evidence.map((item, index) =>
+                          h('li', { key: `${index}-${String(item).slice(0, 20)}` }, item),
+                        ),
+                      ),
+                    )
+                  : null,
+                h(
+                  'div',
+                  { className: 'cc-actions' },
+                  h(
+                    Button,
+                    { variant: 'link', onClick: () => setOpen(false) },
+                    '关闭',
+                  ),
+                ),
+              ),
+            )
+          : null,
+      )
+    }
+
     /* ------------------------------------------------------------------ */
     /* panel                                                               */
     /* ------------------------------------------------------------------ */
@@ -700,6 +860,8 @@ window.__ModuleLoader__.load({
         readRecord,
         listClaudeSessions,
         deleteClaudeSession,
+        resetClaudeSession,
+        getUsage,
       } = props
       const tt = useCallback(
         (key, vars) => {
@@ -750,6 +912,12 @@ window.__ModuleLoader__.load({
       const [recordsOpen, setRecordsOpen] = useState(false)
       const [recordItems, setRecordItems] = useState([])
       const [claudeSessions, setClaudeSessions] = useState([])
+      const [usage, setUsage] = useState({
+        costUsd: 0,
+        calls: 0,
+        budgetUsd: 5,
+        over: false,
+      })
       const [deleteConfirmKey, setDeleteConfirmKey] = useState('')
       const [deletingKey, setDeletingKey] = useState('')
       const [recordSelected, setRecordSelected] = useState(null)
@@ -758,6 +926,7 @@ window.__ModuleLoader__.load({
       const [reviewSettings, setReviewSettings] = useState({
         autoPrompt: true,
         defaultAction: 'none',
+        dailyBudgetUsd: 5,
       })
 
       const update = useCallback((patch) => {
@@ -800,6 +969,10 @@ window.__ModuleLoader__.load({
                   data.defaultAction === 'claude' || data.defaultAction === 'none'
                     ? data.defaultAction
                     : current.defaultAction,
+                dailyBudgetUsd:
+                  typeof data.dailyBudgetUsd === 'number'
+                    ? data.dailyBudgetUsd
+                    : current.dailyBudgetUsd,
               }))
             }
           })
@@ -813,10 +986,18 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         let stopped = false
         const load = async () => {
-          const [detectResult, historyResult, sessionsResult] = await Promise.allSettled([
+          const [
+            detectResult,
+            historyResult,
+            sessionsResult,
+            claudeSessionsResult,
+            usageResult,
+          ] = await Promise.allSettled([
             request('/detect'),
             request('/history'),
             listSessions(),
+            listClaudeSessions(),
+            getUsage(),
           ])
           if (stopped) return
           if (detectResult.status === 'fulfilled') {
@@ -839,6 +1020,16 @@ window.__ModuleLoader__.load({
                 ? sessionsResult.value.items
                 : [],
             )
+          }
+          if (claudeSessionsResult.status === 'fulfilled') {
+            setClaudeSessions(
+              Array.isArray(claudeSessionsResult.value && claudeSessionsResult.value.items)
+                ? claudeSessionsResult.value.items
+                : [],
+            )
+          }
+          if (usageResult.status === 'fulfilled' && usageResult.value) {
+            setUsage((current) => ({ ...current, ...usageResult.value }))
           }
         }
         load()
@@ -1041,6 +1232,8 @@ window.__ModuleLoader__.load({
             permissionWarning: data.permissionWarning,
           })
           setPhase('dispatched')
+          refreshClaudeSessionList()
+          refreshUsage()
           if (data.record) {
             setHistory((current) => [data.record].concat(current).slice(0, 24))
           }
@@ -1288,6 +1481,8 @@ window.__ModuleLoader__.load({
                 }
               : current,
           )
+          refreshClaudeSessionList()
+          refreshUsage()
         } catch (error) {
           setFirstQuestion((current) =>
             current ? { ...current, busy: false, error: error.message } : current,
@@ -1319,6 +1514,8 @@ window.__ModuleLoader__.load({
             message: firstQuestion.draft,
           })
           setToast(tt('firstQuestionDone'))
+          refreshClaudeSessionList()
+          refreshUsage()
           setFirstQuestion(null)
           try {
             await refreshSessions(data.sessionId)
@@ -1901,7 +2098,61 @@ window.__ModuleLoader__.load({
 
       // Phase-focused layout: the handoff card and the dispatch result own the
       // top of the panel, while the already-used setup form folds away.
+      function refreshUsage() {
+        getUsage()
+          .then((data) => {
+            if (data) setUsage((current) => ({ ...current, ...data }))
+          })
+          .catch(() => {})
+      }
+
+      function refreshClaudeSessionList() {
+        listClaudeSessions()
+          .then((data) =>
+            setClaudeSessions(Array.isArray(data && data.items) ? data.items : []),
+          )
+          .catch(() => {})
+      }
+
+      async function resetCurrentClaudeSession(item) {
+        if (!item) return
+        if (!window.confirm(tt('sessionResetConfirm'))) return
+        try {
+          await resetClaudeSession({ key: item.key })
+          setClaudeSessions((current) => current.filter((entry) => entry.key !== item.key))
+          setToast(tt('sessionResetDone'))
+        } catch (error) {
+          fail(error.message)
+        }
+      }
+
       let main
+      const normalizeProject = (value) =>
+        String(value || '')
+          .replace(/\//g, '\\')
+          .replace(/\\+$/, '')
+          .toLowerCase()
+      const currentClaude = form.projectDir
+        ? claudeSessions.find(
+            (item) => normalizeProject(item.cwd) === normalizeProject(form.projectDir),
+          )
+        : null
+      const currentProjectName =
+        String(form.projectDir || '')
+          .split(/[\\/]/)
+          .filter(Boolean)
+          .pop() || ''
+      const claudeUseLabel = (label) => {
+        const labels = {
+          plan: '规划',
+          refine: '定稿',
+          'first-question': '首问',
+          acceptance: '验收',
+          review: '验收意见',
+          'acceptance-brief': '验收任务书',
+        }
+        return labels[label] || label || '最近使用'
+      }
       if (phase === 'dispatched') {
         main = rightCard
       } else if (phase === 'refined') {
@@ -1945,6 +2196,43 @@ window.__ModuleLoader__.load({
             h(Chip, { on: desktopReady, label: tt('statusDesktop') }),
             proxyApplicable ? h(Chip, { on: proxyReady, warn: !proxyReady, label: tt('statusProxy') }) : null,
             h(Chip, { on: ccSwitchReady, label: tt('statusCcSwitch') }),
+            currentClaude
+              ? h(
+                  'span',
+                  {
+                    className: 'cc-sessionChip',
+                    title: `${currentClaude.sessionId}\n${currentClaude.cwd || ''}`,
+                  },
+                  h('i', { className: 'cc-dot on' }),
+                  h(
+                    'span',
+                    { className: 'cc-sessionName' },
+                    `${currentProjectName} · ${currentClaude.sessionId.slice(0, 8)}`,
+                  ),
+                  h('span', { className: 'cc-sessionUse' }, claudeUseLabel(currentClaude.label)),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'cc-sessionReset',
+                      onClick: () => resetCurrentClaudeSession(currentClaude),
+                    },
+                    tt('sessionReset'),
+                  ),
+                )
+              : null,
+            h(
+              'span',
+              {
+                className: `cc-budgetChip${usage.over ? ' over' : ''}`,
+                title: `Claude CLI 今日 ${usage.calls || 0} 次`,
+              },
+              `今日 $${Number(usage.costUsd || 0).toFixed(2)} / ${
+                Number(usage.budgetUsd || 0) > 0
+                  ? `$${Number(usage.budgetUsd).toFixed(2)}`
+                  : '不限'
+              }`,
+            ),
           ),
         ),
         h(
@@ -2011,6 +2299,26 @@ window.__ModuleLoader__.load({
               h('option', { value: 'none' }, tt('defaultActionNone')),
               h('option', { value: 'claude' }, tt('defaultActionClaude')),
             ),
+          ),
+          h(
+            'label',
+            { className: 'cc-field cc-budgetField' },
+            h('span', { className: 'cc-label' }, tt('dailyBudgetLabel')),
+            h('input', {
+              className: 'cc-input',
+              type: 'number',
+              min: 0,
+              step: 0.5,
+              value: reviewSettings.dailyBudgetUsd,
+              onChange: (event) => {
+                const value = Number(event.target.value)
+                const next = Number.isFinite(value) && value >= 0 ? value : 0
+                setReviewSettings((current) => ({ ...current, dailyBudgetUsd: next }))
+                saveSettings({ dailyBudgetUsd: next }).catch(() => {})
+                refreshUsage()
+              },
+            }),
+            h('span', { className: 'cc-hint' }, tt('dailyBudgetHint')),
           ),
         ),
         h(
@@ -2489,6 +2797,15 @@ window.__ModuleLoader__.load({
                     { className: 'cc-recordList' },
                     recordBusy ? h('div', { className: 'cc-hint' }, tt('recordsLoading')) : null,
                     h(
+                      'div',
+                      { className: 'cc-usageLine' },
+                      `今日 Claude：$${Number(usage.costUsd || 0).toFixed(2)} / ${
+                        Number(usage.budgetUsd || 0) > 0
+                          ? `$${Number(usage.budgetUsd).toFixed(2)}`
+                          : '不限'
+                      }（${usage.calls || 0} 次）`,
+                    ),
+                    h(
                       'details',
                       { className: 'cc-claudeSessions' },
                       h(
@@ -2598,6 +2915,19 @@ window.__ModuleLoader__.load({
         'claude-on-dsh: dictionaries',
       )
       ctx.effect(() => injectStyles(), 'claude-on-dsh: stylesheet')
+      ctx.effect(() => {
+        if (!ctx.slots || typeof ctx.slots.inject !== 'function') return () => {}
+        return ctx.slots.inject('conversation.chat.assistant-actions', () =>
+          ctx.slots.register(
+            {
+              name: 'conversation.chat.assistant-actions',
+              id: 'claude-on-dsh:review',
+              order: 90,
+            },
+            ReviewBadge,
+          ),
+        )
+      }, 'claude-on-dsh: review chip')
 
       const t = ctx.locale.bind(NS)
 
@@ -2659,8 +2989,14 @@ window.__ModuleLoader__.load({
         listSessions: () => request('/sessions'),
         listRecords: () => request('/records'),
         listClaudeSessions: () => request('/claude-sessions'),
+        getUsage: () => request('/usage'),
         deleteClaudeSession: (payload) =>
           request('/claude-session/delete', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          }),
+        resetClaudeSession: (payload) =>
+          request('/claude-session/reset', {
             method: 'POST',
             body: JSON.stringify(payload),
           }),
@@ -2765,6 +3101,60 @@ window.__ModuleLoader__.load({
 .cc-heading { margin: 0; font-size: 21px; font-weight: 600; line-height: 1.25; letter-spacing: -0.02em; }
 .cc-subtitle { margin: 4px 0 0; color: var(--dsw-alias-label-secondary); font-size: 12.5px; }
 .cc-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; margin-inline-start: auto; }
+.cc-reviewBadge {
+  display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px;
+  border: 1px solid transparent; border-radius: 999px; font: inherit; font-size: 11px;
+  line-height: 20px; cursor: pointer; white-space: nowrap; max-inline-size: 300px;
+}
+.cc-reviewBadge.pass {
+  background: var(--dsw-alias-state-success-tertiary, #e6faed);
+  border-color: color-mix(in oklab, var(--dsw-alias-state-success-primary) 35%, transparent);
+  color: var(--dsw-alias-label-primary);
+}
+.cc-reviewBadge.fail {
+  background: var(--dsw-alias-state-error-tertiary, #fdecec);
+  border-color: color-mix(in oklab, var(--dsw-alias-state-error-primary) 35%, transparent);
+  color: var(--dsw-alias-label-primary);
+}
+.cc-reviewBadge.uncertain {
+  background: var(--dsw-alias-state-warn-tertiary, #fef5e7);
+  border-color: color-mix(in oklab, var(--dsw-alias-state-warn-primary) 35%, transparent);
+  color: var(--dsw-alias-label-primary);
+}
+.cc-reviewBadge.pass .cc-reviewBadgeVerdict { color: var(--dsw-alias-state-success-primary); }
+.cc-reviewBadge.fail .cc-reviewBadgeVerdict { color: var(--dsw-alias-state-error-primary); }
+.cc-reviewBadge.uncertain .cc-reviewBadgeVerdict { color: var(--dsw-alias-state-warn-primary); }
+.cc-reviewBadgeVerdict { font-weight: 600; letter-spacing: .02em; }
+.cc-reviewBadgeReason { overflow: hidden; text-overflow: ellipsis; color: var(--dsw-alias-label-secondary); }
+.cc-reviewModal { inline-size: min(640px, 100%); }
+.cc-reviewOpinion {
+  white-space: pre-wrap; overflow-wrap: anywhere; max-block-size: 42vh; overflow: auto;
+  padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px;
+  background: var(--dsw-alias-bg-base); font-size: 12px; line-height: 1.65;
+}
+.cc-reviewEvidence { margin: 6px 0 0; padding-inline-start: 18px; color: var(--dsw-alias-label-secondary); font-size: 11.5px; }
+.cc-budgetChip {
+  display: inline-flex; align-items: center; height: 24px; padding: 0 9px;
+  border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary);
+  font-size: 11.5px; white-space: nowrap;
+}
+.cc-budgetChip.over { color: #b9512f; border-color: #efc9b8; background: #fff8f4; }
+.cc-budgetField .cc-input { max-inline-size: 120px; }
+.cc-usageLine { font-size: 11.5px; color: var(--dsw-alias-label-secondary); padding: 2px 0; }
+.cc-sessionChip {
+  display: inline-flex; align-items: center; gap: 6px; block-size: 24px;
+  padding: 0 4px 0 9px; border: 1px solid color-mix(in oklab, #D97757 34%, var(--dsw-alias-border-l1));
+  border-radius: 999px; background: #fff8f4; color: var(--dsw-alias-label-secondary);
+  font-size: 11.5px; white-space: nowrap; max-inline-size: 360px;
+}
+.cc-sessionName { overflow: hidden; text-overflow: ellipsis; }
+.cc-sessionUse { color: #b9512f; }
+.cc-sessionReset {
+  border: 0; border-radius: 999px; padding: 2px 7px; background: transparent;
+  color: #b9512f; font: inherit; font-size: 11px; cursor: pointer;
+}
+.cc-sessionReset:hover { background: #fbe9df; }
 .cc-chip {
   display: inline-flex; align-items: center; gap: 6px; block-size: 24px; padding: 0 9px;
   border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px;

@@ -18,7 +18,7 @@
    固定版本（推荐）：
 
    ```text
-   github:huajikano/claude-on-dsh#v1.2.9
+   github:huajikano/claude-on-dsh#v1.3.0
    ```
 
    等价写法：
@@ -32,24 +32,24 @@
 
 要求：Windows；本机已安装 Claude Code CLI（或安装后在插件配置里填 `claudeCliPath`）；DSH 安装插件需要 Full access 或批准。仓库公开，无需 token。插件是纯 JavaScript bundle，没有构建步骤。
 
-> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 1.2.9。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
+> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 1.3.0。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
 
 ## 更新已安装的版本（重要）
 
 DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 bundle**；直接再次 Add 会提示 `already-installed`，这不是插件版本号没改，而是管理器没有原地升级路径。
 
-更新到 1.2.9：
+更新到 1.3.0：
 
 1. 打开 DSH → **Plugins**；
 2. 找到 **Claude on DSH**，点 **Remove**（只点禁用不够，必须移除依赖）；
 3. 重新 **Add plugin**，填入：
    ```text
-   github:huajikano/claude-on-dsh#v1.2.9
+   github:huajikano/claude-on-dsh#v1.3.0
    ```
 4. 安装后启用，重启/刷新 DSH；
 5. 如果 profile 里的配置被清除，按下面「配置」一节重新填 `claudeCliPath` 等值。
 
-> 不要用不带 `#v1.2.9` 的 `github:huajikano/claude-on-dsh` 做更新：那会跟随默认分支，无法判断装的是哪一版。固定 tag 更可控。
+> 不要用不带 `#v1.3.0` 的 `github:huajikano/claude-on-dsh` 做更新：那会跟随默认分支，无法判断装的是哪一版。固定 tag 更可控。
 
 ## 工作流
 
@@ -91,6 +91,12 @@ DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 
 同一项目下，首问、验收任务书、验收判定和后续提问会复用同一个 Claude Code CLI session（通过 `--resume`）。「记录」里可以展开「插件创建的 Claude 会话」，记录详情也带 session id；如果原项目目录被删除，会明确报错而不是静默新建会话。
 
 每个 Claude 会话都可以在「记录」里单独删除：会同时删除插件的映射和对应的 Claude Code 会话文件。首问发送内容的顺序为：新要求 → 背景 → 首问 → 用户回答 → 执行指令。
+
+## 会话状态与预算
+
+顶部状态行显示当前项目的 Claude 会话：项目名 · 短 id · 最近用途，并可只清除映射（下次新建会话）。旁边显示今日 Claude CLI 费用/预算。预算默认 $5/天，0 表示不限；达到预算后只停止自动验收，手动验收仍可继续。
+
+助手消息旁会出现 `PASS / FAIL / UNCERTAIN` 小 chip，点击查看完整意见与关键证据。回合后 Claude 意见和「Claude 直接验收」报告都会生成 chip。
 
 ## DSH 完成后的验收
 
