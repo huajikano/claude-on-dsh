@@ -108,7 +108,11 @@ window.__ModuleLoader__.load({
         firstQuestionAnswer: '你的回答',
         firstQuestionAnswerPlaceholder: '回答 Claude 的首问，或点选上面的候选答案。',
         firstQuestionAnswerRequired: '请先回答 Claude 的首问',
+        firstQuestionContentRequired: '请回答问题，或手动编辑要发送的内容',
         firstQuestionSendToDsh: '发送给 DSH',
+        firstQuestionDraft: '发送给 DSH 的内容（可编辑）',
+        firstQuestionDraftHint: '发送前可以修改；修改回答会自动更新，手动改过之后不再覆盖。',
+        firstQuestionDraftPlaceholder: '将发送给 DSH 的完整消息',
         firstQuestionBusy: '正在读取对话并生成首问…',
         existingPick: '选择一个已有对话…',
         dshAcceptOpened: '已把验收任务发回原 DSH 会话',
@@ -272,7 +276,11 @@ window.__ModuleLoader__.load({
         firstQuestionAnswer: 'Your answer',
         firstQuestionAnswerPlaceholder: 'Answer Claude’s question, or pick a choice above.',
         firstQuestionAnswerRequired: 'Answer the first question first',
+        firstQuestionContentRequired: 'Answer the question, or edit the message to send',
         firstQuestionSendToDsh: 'Send to DSH',
+        firstQuestionDraft: 'Message to DSH (editable)',
+        firstQuestionDraftHint: 'Edit before sending; answer changes fill it until you edit it manually.',
+        firstQuestionDraftPlaceholder: 'The full message sent to DSH',
         firstQuestionBusy: 'Reading the conversation and drafting the first question…',
         existingPick: 'Choose an existing conversation…',
         dshAcceptOpened: 'Acceptance task sent back to the original DSH session',
@@ -1105,6 +1113,9 @@ window.__ModuleLoader__.load({
           error: '',
           generated: null,
           answer: '',
+          draft: '',
+          draftTemplate: '',
+          draftEdited: false,
         })
         // The picker should offer the conversations that exist now, not the
         // snapshot taken when the panel first mounted.
@@ -1145,7 +1156,16 @@ window.__ModuleLoader__.load({
           })
           setFirstQuestion((current) =>
             current
-              ? { ...current, busy: false, error: '', generated: data, answer: '' }
+              ? {
+                  ...current,
+                  busy: false,
+                  error: '',
+                  generated: data,
+                  answer: '',
+                  draft: String(data.draft || '').replaceAll('{{answer}}', '（待填写）'),
+                  draftTemplate: String(data.draft || ''),
+                  draftEdited: false,
+                }
               : current,
           )
         } catch (error) {
@@ -1157,9 +1177,12 @@ window.__ModuleLoader__.load({
 
       async function sendFirstQuestionToDsh() {
         if (!firstQuestion || !firstQuestion.generated) return
-        if (!firstQuestion.answer.trim()) {
+        if (
+          !firstQuestion.answer.trim() &&
+          !(firstQuestion.draftEdited && firstQuestion.draft.trim())
+        ) {
           setFirstQuestion((current) =>
-            current ? { ...current, error: tt('firstQuestionAnswerRequired') } : current,
+            current ? { ...current, error: tt('firstQuestionContentRequired') } : current,
           )
           return
         }
@@ -1173,6 +1196,7 @@ window.__ModuleLoader__.load({
             question: firstQuestion.generated.question,
             answer: firstQuestion.answer,
             brief: firstQuestion.generated.brief,
+            message: firstQuestion.draft,
           })
           setToast(tt('firstQuestionDone'))
           setFirstQuestion(null)
@@ -1924,7 +1948,9 @@ window.__ModuleLoader__.load({
                   `${tt('firstQuestion')}：${firstQuestion.entry.title || firstQuestion.entry.sessionId}`,
                 ),
                 h('div', { className: 'cc-hint' }, tt('firstQuestionHint')),
-                h(
+                firstQuestion.generated
+                  ? null
+                  : h(
                   'label',
                   { className: 'cc-field' },
                   h('span', { className: 'cc-label' }, tt('firstQuestionOther')),
@@ -1952,6 +1978,9 @@ window.__ModuleLoader__.load({
                                 },
                                 generated: null,
                                 answer: '',
+                                draft: '',
+                                draftTemplate: '',
+                                draftEdited: false,
                               }
                             : current,
                         )
@@ -1981,7 +2010,9 @@ window.__ModuleLoader__.load({
                     }),
                   ),
                 ),
-                h(
+                firstQuestion.generated
+                  ? null
+                  : h(
                   'label',
                   { className: 'cc-field' },
                   h('span', { className: 'cc-label' }, tt('firstQuestionRequirement')),
@@ -2016,9 +2047,17 @@ window.__ModuleLoader__.load({
                                   key: choice,
                                   variant: 'ghost',
                                   onClick: () =>
-                                    setFirstQuestion((current) =>
-                                      current ? { ...current, answer: choice } : current,
-                                    ),
+                                    setFirstQuestion((current) => {
+                                      if (!current) return current
+                                      const next = { ...current, answer: choice }
+                                      if (!current.draftEdited && current.draftTemplate) {
+                                        next.draft = current.draftTemplate.replaceAll(
+                                          '{{answer}}',
+                                          choice,
+                                        )
+                                      }
+                                      return next
+                                    }),
                                 },
                                 choice,
                               ),
@@ -2034,9 +2073,37 @@ window.__ModuleLoader__.load({
                           rows: 4,
                           value: firstQuestion.answer,
                           placeholder: tt('firstQuestionAnswerPlaceholder'),
+                          onChange: (event) => {
+                            const value = event.target.value
+                            setFirstQuestion((current) => {
+                              if (!current) return current
+                              const next = { ...current, answer: value }
+                              if (!current.draftEdited && current.draftTemplate) {
+                                next.draft = current.draftTemplate.replaceAll(
+                                  '{{answer}}',
+                                  value || '（待填写）',
+                                )
+                              }
+                              return next
+                            })
+                          },
+                        }),
+                      ),
+                      h(
+                        'label',
+                        { className: 'cc-field cc-draftField' },
+                        h('span', { className: 'cc-label' }, tt('firstQuestionDraft')),
+                        h('div', { className: 'cc-hint' }, tt('firstQuestionDraftHint')),
+                        h('textarea', {
+                          className: 'cc-textarea cc-draft',
+                          rows: 8,
+                          value: firstQuestion.draft,
+                          placeholder: tt('firstQuestionDraftPlaceholder'),
                           onChange: (event) =>
                             setFirstQuestion((current) =>
-                              current ? { ...current, answer: event.target.value } : current,
+                              current
+                                ? { ...current, draft: event.target.value, draftEdited: true }
+                                : current,
                             ),
                         }),
                       ),
@@ -2623,6 +2690,14 @@ window.__ModuleLoader__.load({
   font-size: 12.5px;
 }
 .cc-existing { display: flex; flex-direction: column; gap: 10px; }
+.cc-draftField {
+  margin-block-start: 4px; padding-block-start: 12px;
+  border-block-start: 1px solid var(--dsw-alias-border-l1);
+}
+.cc-draft {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px; line-height: 1.55; background: var(--dsw-alias-bg-base);
+}
 .cc-reviewSettings { gap: 10px; }
 .cc-switch {
   display: inline-flex; align-items: center; gap: 7px;

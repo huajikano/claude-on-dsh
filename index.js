@@ -1097,10 +1097,44 @@ export function apply(ctx, config = {}) {
       )
     }
     if (!brief) brief = `[Claude 首问]\n${question}\n\n背景：${understanding}`
-    return json({ sessionId, understanding, question, brief, choices, sent: false })
+    return json({
+      sessionId,
+      understanding,
+      question,
+      brief,
+      choices,
+      draft: firstQuestionMessage({
+        requirement,
+        question,
+        answer: '{{answer}}',
+        brief,
+      }),
+      sent: false,
+    })
   }
 
-  async function sendFirstQuestionToSession(sessionId, question, answer, brief, requirement, projectDir, title) {
+  function firstQuestionMessage({ requirement, question, answer, brief }) {
+    const lines = ['[Claude 首问]']
+    const request = text(requirement).trim()
+    if (request) lines.push(`新要求：${request}`)
+    lines.push(`首问：${question}`)
+    lines.push(`用户回答：${answer}`)
+    const background = text(brief).trim()
+    if (background && background !== question.trim()) lines.push(`背景：${background}`)
+    lines.push('请据此继续推进；只有遇到无法从上下文推断的阻塞项才提问。')
+    return lines.join('\n')
+  }
+
+  async function sendFirstQuestionToSession(
+    sessionId,
+    question,
+    answer,
+    brief,
+    requirement,
+    projectDir,
+    title,
+    editedMessage,
+  ) {
     let live = ctx.sessions.get(sessionId)
     if (!live) {
       try {
@@ -1127,18 +1161,11 @@ export function apply(ctx, config = {}) {
       }
     }
     // The handoff must carry the user's original requirement: the question and
-    // answer alone rarely tell DSH what to build. The background is always
-    // appended (unless it is byte-identical to the question), because the
-    // generated brief is expected to repeat the question as part of its text.
-    const lines = ['[Claude 首问]']
-    const request = text(requirement).trim()
-    if (request) lines.push(`新要求：${request}`)
-    lines.push(`首问：${question}`)
-    lines.push(`用户回答：${answer}`)
-    const background = text(brief).trim()
-    if (background && background !== question.trim()) lines.push(`背景：${background}`)
-    lines.push('请据此继续推进；只有遇到无法从上下文推断的阻塞项才提问。')
-    const message = lines.join('\n')
+    // answer alone rarely tell DSH what to build. The user can edit the final
+    // message in the panel; otherwise compose the standard handoff.
+    const message =
+      text(editedMessage).trim() ||
+      firstQuestionMessage({ requirement, question, answer, brief })
     reviewPrompt.arm(sessionId, {
       workspace,
       title: text(title).trim() || path.basename(workspace || ''),
@@ -2066,9 +2093,10 @@ export function apply(ctx, config = {}) {
         const requirement = text(body.requirement).trim()
         const projectDir = text(body.projectDir).trim()
         const title = text(body.title).trim()
+        const message = text(body.message).trim()
         if (!sessionId) throw userError('请选择已有 DSH 对话')
         if (!question) throw userError('缺少 Claude 的首问')
-        if (!answer) throw userError('请先回答 Claude 的首问')
+        if (!answer && !message) throw userError('请先回答 Claude 的首问，或编辑要发送的内容')
         return sendFirstQuestionToSession(
           sessionId,
           question,
@@ -2077,6 +2105,7 @@ export function apply(ctx, config = {}) {
           requirement,
           projectDir,
           title,
+          message,
         )
       }),
     },
