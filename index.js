@@ -677,17 +677,21 @@ function createJobs() {
 
   function start(kind, begin) {
     const id = randomUUID()
-    const run = begin()
+    const output = begin()
+    const promise =
+      output && typeof output.then === 'function' ? output : output && output.promise
+    const cancel =
+      output && typeof output.cancel === 'function' ? output.cancel : undefined
     const job = {
       id,
       kind,
       state: 'running',
       phase: kind === 'brief' ? 'Claude 正在理解需求' : 'Claude 正在定稿交接书',
       startedAt: Date.now(),
-      cancel: run.cancel,
+      cancel,
     }
     jobs.set(id, job)
-    run.promise.then(
+    promise.then(
       ({ data, meta }) => {
         Object.assign(job, {
           state: 'done',
