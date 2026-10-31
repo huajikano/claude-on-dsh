@@ -1,8 +1,8 @@
 {
   "name": "claude-on-dsh",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "private": true,
-  "description": "Claude on DSH: the local Claude Code CLI (or Claude Desktop) runs a new project's opening question and plan, then DSH executes the handoff; evidence-based acceptance gate and an in-panel acceptance view.",
+  "description": "Claude on DSH: Claude Code CLI or Desktop plans a project, hands it to DSH, and adds editable opening questions, handoffs, and post-turn Claude review choices.",
   "type": "module",
   "repository": {
     "type": "git",
@@ -27,6 +27,8 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
+    "assets",
+    "screenshots.json",
     "lib",
     "bin",
     "docs",

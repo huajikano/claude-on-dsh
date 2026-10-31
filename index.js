@@ -755,6 +755,74 @@ function appendHistory(entry) {
 }
 
 /* ------------------------------------------------------------------ */
+/* content records                                                     */
+/* ------------------------------------------------------------------ */
+
+function recordsDir() {
+  return path.join(dshHome(), 'claude-on-dsh', 'records')
+}
+
+function recordPath(id) {
+  return path.join(recordsDir(), `${id}.json`)
+}
+
+async function writeContentRecord(entry) {
+  const at = Date.now()
+  const id = `${at}-${randomUUID().slice(0, 8)}`
+  const content = String(entry.content || '').slice(0, 300_000)
+  const record = {
+    id,
+    at,
+    kind: String(entry.kind || 'content'),
+    title: String(entry.title || '').slice(0, 200),
+    sessionId: String(entry.sessionId || ''),
+    projectDir: String(entry.projectDir || ''),
+    chars: content.length,
+    content,
+  }
+  await mkdir(recordsDir(), { recursive: true })
+  await writeFile(recordPath(id), `${JSON.stringify(record, null, 2)}\n`, 'utf8')
+  return record
+}
+
+async function listContentRecords() {
+  try {
+    const names = readdirSync(recordsDir())
+      .filter((name) => name.endsWith('.json'))
+      .sort()
+      .reverse()
+      .slice(0, 60)
+    const items = []
+    for (const name of names) {
+      try {
+        const record = JSON.parse(await readFile(path.join(recordsDir(), name), 'utf8'))
+        items.push({
+          id: record.id,
+          at: record.at,
+          kind: record.kind,
+          title: record.title,
+          sessionId: record.sessionId,
+          projectDir: record.projectDir,
+          chars: record.chars,
+        })
+      } catch {}
+    }
+    return items
+  } catch {
+    return []
+  }
+}
+
+async function readContentRecord(id) {
+  if (!/^[0-9]+-[a-f0-9]{8}$/.test(String(id || ''))) return null
+  try {
+    return JSON.parse(await readFile(recordPath(id), 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* plugin                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -1097,18 +1165,41 @@ export function apply(ctx, config = {}) {
       )
     }
     if (!brief) brief = `[Claude 首问]\n${question}\n\n背景：${understanding}`
+    const draft = firstQuestionMessage({
+      requirement,
+      question,
+      answer: '{{answer}}',
+      brief,
+    })
+    try {
+      await writeContentRecord({
+        kind: 'first-question',
+        title: path.basename(workspace),
+        sessionId,
+        projectDir: workspace,
+        content: [
+          'Claude 首问',
+          `项目：${workspace}`,
+          `会话：${sessionId}`,
+          `新要求：${requirement || '无'}`,
+          `理解：${understanding || '无'}`,
+          `首问：${question}`,
+          choices.length ? `候选答案：\n${choices.map((item) => `- ${item}`).join('\n')}` : '',
+          `待发送内容：\n${draft}`,
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+      })
+    } catch (error) {
+      ctx.logger?.warn?.(`[claude-on-dsh] 无法写入首问记录：${messageOf(error)}`)
+    }
     return json({
       sessionId,
       understanding,
       question,
       brief,
       choices,
-      draft: firstQuestionMessage({
-        requirement,
-        question,
-        answer: '{{answer}}',
-        brief,
-      }),
+      draft,
       sent: false,
     })
   }
@@ -1181,6 +1272,17 @@ export function apply(ctx, config = {}) {
       },
       AbortSignal.timeout(60_000),
     )
+    try {
+      await writeContentRecord({
+        kind: 'first-question-sent',
+        title: text(title).trim() || path.basename(workspace || ''),
+        sessionId,
+        projectDir: workspace,
+        content: message,
+      })
+    } catch (error) {
+      ctx.logger?.warn?.(`[claude-on-dsh] 无法写入首问发送记录：${messageOf(error)}`)
+    }
     // First-question sessions are real DSH conversations too: record them so
     // the acceptance list and `acceptancePayload` can resolve their workspace
     // after a reload instead of falling back to "no session".
@@ -1514,6 +1616,17 @@ export function apply(ctx, config = {}) {
     } catch (error) {
       reviewPrompt.disarm(created.sessionId)
       throw error
+    }
+    try {
+      await writeContentRecord({
+        kind: 'dispatch',
+        title: workspace.title,
+        sessionId: created.sessionId,
+        projectDir,
+        content: brief,
+      })
+    } catch (error) {
+      ctx.logger?.warn?.(`[claude-on-dsh] 无法写入派发记录：${messageOf(error)}`)
     }
 
     const record = {
@@ -2016,6 +2129,8 @@ export function apply(ctx, config = {}) {
         const body = await readBody(request)
         const sessionId = text(body.sessionId).trim()
         const message = text(body.message).trim()
+        const title = text(body.title).trim()
+        const projectDir = text(body.projectDir).trim()
         if (!sessionId) throw userError('缺少要验收的 DSH 会话')
         if (!message) throw userError('发送内容为空', '请先生成或填写验收内容。', 400)
         let live = ctx.sessions.get(sessionId)
@@ -2046,6 +2161,17 @@ export function apply(ctx, config = {}) {
           },
           AbortSignal.timeout(60_000),
         )
+        try {
+          await writeContentRecord({
+            kind: 'acceptance',
+            title: title || sessionId,
+            sessionId,
+            projectDir,
+            content: message,
+          })
+        } catch (error) {
+          ctx.logger?.warn?.(`[claude-on-dsh] 无法写入验收记录：${messageOf(error)}`)
+        }
         return json({ sessionId, sent: true })
       }),
     },
@@ -2118,6 +2244,21 @@ export function apply(ctx, config = {}) {
           title,
           message,
         )
+      }),
+    },
+    {
+      path: '/records',
+      methods: ['GET'],
+      handler: endpoint(async () => json({ items: await listContentRecords() })),
+    },
+    {
+      path: '/record',
+      methods: ['GET'],
+      handler: endpoint(async (request) => {
+        const id = new URL(request.url).searchParams.get('id') || ''
+        const record = await readContentRecord(id)
+        if (!record) throw userError('记录不存在或已被清理', '', 404)
+        return json({ record })
       }),
     },
     {

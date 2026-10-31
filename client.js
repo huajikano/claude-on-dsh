@@ -97,6 +97,14 @@ window.__ModuleLoader__.load({
         acceptanceDone: '验收完成',
         firstQuestion: '首问',
         chooseSession: '选择会话',
+        records: '记录',
+        recordsEmpty: '还没有首问或派发记录。',
+        recordsLoading: '正在读取记录…',
+        recordsBack: '返回列表',
+        recordFirst: '首问',
+        recordFirstSent: '首问发送',
+        recordDispatch: '派发',
+        recordAcceptance: '验收',
         reviewSettings: 'DSH 完成后的验收',
         reviewSettingsHint: '开启后，DSH 每轮结束会在原会话里出现验收选项；默认项也可以设成直接交给 Claude。',
         autoPromptToggle: 'DSH 完成后自动出现验收选项',
@@ -271,6 +279,14 @@ window.__ModuleLoader__.load({
         acceptanceDone: 'Acceptance complete',
         firstQuestion: 'First question',
         chooseSession: 'Choose conversation',
+        records: 'Records',
+        recordsEmpty: 'No first-question or handoff records yet.',
+        recordsLoading: 'Loading records…',
+        recordsBack: 'Back to list',
+        recordFirst: 'First question',
+        recordFirstSent: 'First question sent',
+        recordDispatch: 'Dispatch',
+        recordAcceptance: 'Acceptance',
         reviewSettings: 'Acceptance after DSH',
         reviewSettingsHint: 'When enabled, a review choice appears in the original DSH conversation after each turn; the default can hand it straight to Claude.',
         autoPromptToggle: 'Show the review choice after DSH finishes',
@@ -670,6 +686,8 @@ window.__ModuleLoader__.load({
         currentSessionId,
         getSettings,
         saveSettings,
+        listRecords,
+        readRecord,
       } = props
       const tt = useCallback(
         (key, vars) => {
@@ -717,6 +735,11 @@ window.__ModuleLoader__.load({
       const [dialog, setDialog] = useState(null)
       const [firstQuestion, setFirstQuestion] = useState(null)
       const [allSessions, setAllSessions] = useState([])
+      const [recordsOpen, setRecordsOpen] = useState(false)
+      const [recordItems, setRecordItems] = useState([])
+      const [recordSelected, setRecordSelected] = useState(null)
+      const [recordBusy, setRecordBusy] = useState(false)
+      const [recordError, setRecordError] = useState('')
       const [reviewSettings, setReviewSettings] = useState({
         autoPrompt: true,
         defaultAction: 'none',
@@ -1097,6 +1120,47 @@ window.__ModuleLoader__.load({
         } catch (error) {
           fail(error.message, error.hint)
         }
+      }
+
+      function recordKindLabel(kind) {
+        if (kind === 'first-question') return tt('recordFirst')
+        if (kind === 'first-question-sent') return tt('recordFirstSent')
+        if (kind === 'dispatch') return tt('recordDispatch')
+        if (kind === 'acceptance') return tt('recordAcceptance')
+        return kind
+      }
+
+      async function openRecords() {
+        setRecordsOpen(true)
+        setRecordSelected(null)
+        setRecordBusy(true)
+        setRecordError('')
+        try {
+          const data = await listRecords()
+          setRecordItems(Array.isArray(data.items) ? data.items : [])
+        } catch (error) {
+          setRecordError(error.message)
+        } finally {
+          setRecordBusy(false)
+        }
+      }
+
+      async function viewRecord(id) {
+        setRecordBusy(true)
+        setRecordError('')
+        try {
+          const data = await readRecord(id)
+          setRecordSelected(data.record)
+        } catch (error) {
+          setRecordError(error.message)
+        } finally {
+          setRecordBusy(false)
+        }
+      }
+
+      function closeRecords() {
+        setRecordsOpen(false)
+        setRecordSelected(null)
       }
 
       function openCurrentFirstQuestion() {
@@ -1863,6 +1927,7 @@ window.__ModuleLoader__.load({
             ),
           ),
           h(Button, { variant: 'ghost', onClick: openCurrentFirstQuestion }, tt('chooseSession')),
+          h(Button, { variant: 'link', onClick: openRecords }, tt('records')),
         ),
         notice ? h(Notice, { notice, tt }) : null,
         main,
@@ -2347,6 +2412,65 @@ window.__ModuleLoader__.load({
                 ),
             )
           : null,
+        recordsOpen
+          ? h(
+              Modal,
+              { title: tt('records'), onClose: closeRecords },
+              recordSelected
+                ? h(
+                    'div',
+                    { className: 'cc-recordView' },
+                    h(
+                      'div',
+                      { className: 'cc-actions' },
+                      h(
+                        Button,
+                        { variant: 'link', onClick: () => setRecordSelected(null) },
+                        tt('recordsBack'),
+                      ),
+                    ),
+                    h(
+                      'div',
+                      { className: 'cc-recordMeta' },
+                      `${recordKindLabel(recordSelected.kind)} · ${timeAgo(recordSelected.at, tt)} · ${recordSelected.title || recordSelected.sessionId}`,
+                    ),
+                    h('pre', { className: 'cc-recordContent' }, recordSelected.content),
+                  )
+                : h(
+                    'div',
+                    { className: 'cc-recordList' },
+                    recordBusy ? h('div', { className: 'cc-hint' }, tt('recordsLoading')) : null,
+                    recordError
+                      ? h(
+                          'div',
+                          { className: 'cc-notice' },
+                          h('div', { className: 'cc-noticeBody' }, recordError),
+                        )
+                      : null,
+                    !recordBusy && recordItems.length === 0
+                      ? h('div', { className: 'cc-hint' }, tt('recordsEmpty'))
+                      : null,
+                    recordItems.map((item) =>
+                      h(
+                        'button',
+                        {
+                          type: 'button',
+                          className: 'cc-recordItem',
+                          key: item.id,
+                          onClick: () => viewRecord(item.id),
+                        },
+                        h('span', { className: 'cc-recordKind' }, recordKindLabel(item.kind)),
+                        h(
+                          'span',
+                          { className: 'cc-recordTitle' },
+                          item.title || item.sessionId || '',
+                        ),
+                        h('span', { className: 'cc-recordTime' }, timeAgo(item.at, tt)),
+                      ),
+                    ),
+                  ),
+            )
+          : null,
         toast ? h('div', { className: 'cc-toast', role: 'status' }, toast) : null,
       )
     }
@@ -2424,6 +2548,8 @@ window.__ModuleLoader__.load({
             timeoutMs: 90_000,
           }),
         listSessions: () => request('/sessions'),
+        listRecords: () => request('/records'),
+        readRecord: (id) => request(`/record?id=${encodeURIComponent(id)}`),
         getSettings: () => request('/settings'),
         saveSettings: (patch) =>
           request('/settings', {
@@ -2808,6 +2934,28 @@ window.__ModuleLoader__.load({
 .cc-switch {
   display: inline-flex; align-items: center; gap: 7px;
   font-size: 12px; color: var(--dsw-alias-label-secondary); cursor: pointer;
+}
+.cc-recordList { display: flex; flex-direction: column; gap: 5px; max-block-size: 60vh; overflow: auto; }
+.cc-recordItem {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center;
+  gap: 10px; inline-size: 100%; padding: 9px 10px; cursor: pointer; text-align: start;
+  border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px;
+  background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit;
+}
+.cc-recordItem:hover { background: var(--dsw-alias-bg-layer-2); }
+.cc-recordKind {
+  padding: 1px 7px; border-radius: 999px; border: 1px solid var(--dsw-alias-border-l2);
+  font-size: 10.5px; color: var(--dsw-alias-label-secondary); white-space: nowrap;
+}
+.cc-recordTitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.cc-recordTime { font-size: 11px; color: var(--dsw-alias-label-secondary); white-space: nowrap; }
+.cc-recordMeta { font-size: 11.5px; color: var(--dsw-alias-label-secondary); }
+.cc-recordContent {
+  white-space: pre-wrap; overflow-wrap: anywhere; max-block-size: 58vh; overflow: auto;
+  margin: 0; padding: 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px;
+  background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px; line-height: 1.6;
 }
 .cc-toast {
   position: fixed; inset-block-end: 26px; inset-inline: 0; margin-inline: auto; z-index: 60;
