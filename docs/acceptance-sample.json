@@ -1,4 +1,4 @@
-{
+﻿{
   "schemaVersion": "1.0",
   "sessionId": "session-192c299b-c3f0-4564-80f5-339e78f291d6",
   "workspace": "D:\\XiangMu\\音乐制作",
@@ -57,7 +57,7 @@
           "excerpt": "edit D:\\XiangMu\\claude-on-dsh\\client.js"
         }
       ],
-      "note": "证据仅记录在 ClaudeCommander 与 claude-on-dsh 下写入了 package.json、cordis.patch.yml、index.js、client.js、locale 等文件，文件形态与“DSH 插件”一致，但属路径级记录，无任何内容或运行证据可证明左侧栏入口、Claude Code CLI 路径发现、桌面版与 CC Switch API key 接入、“首个提问由 Claude 指挥、后续交由 DSH”的派发逻辑；ev-2 为执行代理自述，按验收规则不采信。故不足以判 pass，也不足以判 fail。"
+      "note": "证据仅记录在 ClaudeCommander 与 claude-on-dsh 下写入了 package.json、cordis.patch.yml、index.js、client.js、locale 等文件，文件形态与“DSH 插件”一致，但属路径级记录，无任何内容或运行证据可证明左侧栏入口、Claude Code CLI 路径发现、桌面版与 CC Switch 本地代理接入、“首个提问由 Claude 指挥、后续交由 DSH”的派发逻辑；ev-2 为执行代理自述，按验收规则不采信。故不足以判 pass，也不足以判 fail。"
     },
     {
       "id": "verification",
@@ -149,7 +149,7 @@
   "missing": [
     "无 client.js/index.js 的内容级证据或运行截图，无法验证“带左侧栏入口”是否真实实现并渲染。",
     "无证据显示 Claude Code CLI 的定位/发现逻辑（任务要求“位置自行找”）。",
-    "无证据显示桌面版路径 C:\\Program Files\\WindowsApps\\Claude_3.6556.2.0_x64__pzs8sxrjxfjjc\\app 与 D:\\CC Switch\\cc-switch.exe 的 API key 接入实现。",
+    "无证据显示桌面版路径 C:\\Program Files\\WindowsApps\\Claude_3.6556.2.0_x64__pzs8sxrjxfjjc\\app 与 D:\\CC Switch\\cc-switch.exe 的 本地代理接入实现。",
     "无证据显示“新项目首个提问由 Claude 指挥、后续全部交由 DSH 完成”的派发闭环。",
     "无法确认最终交付目录：ClaudeCommander 与 claude-on-dsh 两套实现并存，另有 claude-on-dsh-probe。",
     "无插件已在 DSH 中安装/加载的证据（无侧栏入口实际可见的验证记录）。"

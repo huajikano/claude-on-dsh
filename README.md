@@ -2,6 +2,8 @@
 
 一个 DSH 侧栏插件：让**本机 Claude Code CLI** 或 **Claude 桌面版**负责新项目的首个提问与规划，然后把完整任务交接给 **DSH** 执行。
 
+界面采用 Claude Desktop 的暖白纸面、橙色强调与衬线标题；会话、预算和验收详情都收在现有面板/记录弹窗里，不额外占主页空间。
+
 仓库：<https://github.com/huajikano/claude-on-dsh>
 
 ## 在 DSH 里直接安装（GitHub）
@@ -18,7 +20,7 @@
    固定版本（推荐）：
 
    ```text
-   github:huajikano/claude-on-dsh#v1.3.3
+   github:huajikano/claude-on-dsh#v1.3.4
    ```
 
    等价写法：
@@ -30,26 +32,26 @@
 3. 安装完成后启用 **Claude on DSH** bundle；若提示重启，重启 DSH。
 4. 刷新 Web 页面，左侧栏出现橙色星形图标。
 
-要求：Windows；本机已安装 Claude Code CLI（或安装后在插件配置里填 `claudeCliPath`）；DSH 安装插件需要 Full access 或批准。仓库公开，无需 token。插件是纯 JavaScript bundle，没有构建步骤。
+要求：Windows；本机已安装 Claude Code CLI（或安装后在插件配置里填 `claudeCliPath`）；DSH 安装插件需要 Full access 或批准。仓库公开，无需登录。插件是纯 JavaScript bundle，没有构建步骤。
 
-> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 1.3.3。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
+> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 1.3.4。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
 
 ## 更新已安装的版本（重要）
 
 DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 bundle**；直接再次 Add 会提示 `already-installed`，这不是插件版本号没改，而是管理器没有原地升级路径。
 
-更新到 1.3.3：
+更新到 1.3.4：
 
 1. 打开 DSH → **Plugins**；
 2. 找到 **Claude on DSH**，点 **Remove**（只点禁用不够，必须移除依赖）；
 3. 重新 **Add plugin**，填入：
    ```text
-   github:huajikano/claude-on-dsh#v1.3.3
+   github:huajikano/claude-on-dsh#v1.3.4
    ```
 4. 安装后启用，重启/刷新 DSH；
 5. 如果 profile 里的配置被清除，按下面「配置」一节重新填 `claudeCliPath` 等值。
 
-> 不要用不带 `#v1.3.3` 的 `github:huajikano/claude-on-dsh` 做更新：那会跟随默认分支，无法判断装的是哪一版。固定 tag 更可控。
+> 不要用不带 `#v1.3.4` 的 `github:huajikano/claude-on-dsh` 做更新：那会跟随默认分支，无法判断装的是哪一版。固定 tag 更可控。
 
 ## 工作流
 
@@ -119,9 +121,9 @@ DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 
 |---|---|---|
 | Claude Code CLI | `%APPDATA%\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe`（自动探测） | 以 `-p --output-format json --json-schema` 运行，提示词走 stdin，避免命令行长度与转义问题 |
 | Claude 桌面版 | `C:\Program Files\WindowsApps\Claude_3.6556.2.0_x64__pzs8sxrjxfjjc\app\claude.exe`（自动探测） | 桌面版没有可编程接口，因此作为「人工接管」通道：生成简报、复制到剪贴板、拉起桌面版，再把 Claude 的回复粘回面板 |
-| CC Switch | `D:\CC Switch\cc-switch.exe`（自动探测） | CLI 与桌面版的实际 API key 由 CC Switch 的本地代理提供；面板会显示代理是否可达，并可一键拉起 CC Switch |
+| CC Switch | `D:\CC Switch\cc-switch.exe`（自动探测） | CLI 与桌面版的认证由 CC Switch 的本地代理提供；面板会显示代理是否可达，并可一键拉起 CC Switch |
 
-> 桌面版通过 CC Switch 使用其配置的 API key；插件自身不读取、不保存任何密钥，只把 `~/.claude/settings.json` 里的 `ANTHROPIC_BASE_URL` 当作代理健康检查目标。
+> 桌面版通过 CC Switch 使用其配置的本地代理；插件自身不读取、不保存任何凭据，只把 `~/.claude/settings.json` 里的 `ANTHROPIC_BASE_URL` 当作代理健康检查目标。
 
 ## 本地开发 / 离线安装
 
@@ -152,7 +154,7 @@ DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 
 - 规划阶段默认使用 `plan`（只读）权限模式；插件不会让 Claude 修改项目文件。
 - 派发使用 DSH 的 API Session Controller，任务书进入正常会话日志，可审计、可中断。
 - `bypassPermissions` 仅在你自己显式配置时生效，面板不提供该选项；浏览器请求的权限模式被限制在 `plan` / `dontAsk` / `acceptEdits`。
-- 插件不读取、不写入任何 API key；认证由 Claude Code / CC Switch 的原生配置负责。
+- 插件不读取、不写入任何凭据；认证由 Claude Code / CC Switch 的原生配置负责。
 
 ## 两种使用方式
 

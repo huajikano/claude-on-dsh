@@ -278,7 +278,6 @@ function readClaudeSettings() {
     exists: Boolean(raw),
     path: file,
     baseUrl: text(env.ANTHROPIC_BASE_URL).trim(),
-    hasAuthToken: Boolean(text(env.ANTHROPIC_AUTH_TOKEN).trim() || text(env.ANTHROPIC_API_KEY).trim()),
     defaultMode: text(raw && raw.permissions && raw.permissions.defaultMode).trim(),
     models: [
       text(env.ANTHROPIC_DEFAULT_OPUS_MODEL).trim(),
@@ -1842,7 +1841,6 @@ export function apply(ctx, config = {}) {
         exists: claudeSettings.exists,
         path: claudeSettings.path,
         baseUrl: claudeSettings.baseUrl,
-        hasAuthToken: claudeSettings.hasAuthToken,
         defaultMode: claudeSettings.defaultMode,
         models: claudeSettings.models,
       },

@@ -1,4 +1,4 @@
-# 验收报告 · session-192c299b-c3f0-4564-80f5-339e78f291d6
+﻿# 验收报告 · session-192c299b-c3f0-4564-80f5-339e78f291d6
 
 - 总结论：**FAIL**
 - 状态：completed
@@ -11,7 +11,7 @@
 
 ## 任务
 
-创建一个带左侧栏入口的 DSH 插件。这个插件是能调用本机的claude code cli或者桌面版给本dsh派发任务和新项目首个提问由claude指挥，后续全部交由dsh完成项目的插件。claude code cli的位置自行找，claude桌面版的位置在C:\Program Files\WindowsApps\Claude_3.6556.2.0_x64__pzs8sxrjxfjjc\app，但是桌面版永的apikey是"D:\CC Switch\cc-switch.exe"这个软件的
+创建一个带左侧栏入口的 DSH 插件。这个插件是能调用本机的claude code cli或者桌面版给本dsh派发任务和新项目首个提问由claude指挥，后续全部交由dsh完成项目的插件。claude code cli的位置自行找，claude桌面版的位置在C:\Program Files\WindowsApps\Claude_3.6556.2.0_x64__pzs8sxrjxfjjc\app，桌面版通过 D:\\CC Switch\\cc-switch.exe 的本地代理连接。
 
 ## 总结
 
@@ -21,7 +21,7 @@
 
 | 检查项 | 结论 | 证据定位 | 说明 |
 |---|---|---|---|
-| 改动是否回应任务目标 (`goal-response`) | **uncertain** | user/message#16<br>tool/call#390<br>tool/call#402<br>tool/call#1145<br>tool/call#1157<br>tool/call#1159 | 证据仅记录在 ClaudeCommander 与 claude-on-dsh 下写入了 package.json、cordis.patch.yml、index.js、client.js、locale 等文件，文件形态与“DSH 插件”一致，但属路径级记录，无任何内容或运行证据可证明左侧栏入口、Claude Code CLI 路径发现、桌面版与 CC Switch API key 接入、“首个提问由 Claude 指挥、后续交由 DSH”的派发逻辑；ev-2 为执行代理自述，按验收规则不采信。故不足以判 pass，也不足以判 fail。 |
+| 改动是否回应任务目标 (`goal-response`) | **uncertain** | user/message#16<br>tool/call#390<br>tool/call#402<br>tool/call#1145<br>tool/call#1157<br>tool/call#1159 | 证据仅记录在 ClaudeCommander 与 claude-on-dsh 下写入了 package.json、cordis.patch.yml、index.js、client.js、locale 等文件，文件形态与“DSH 插件”一致，但属路径级记录，无任何内容或运行证据可证明左侧栏入口、Claude Code CLI 路径发现、桌面版与 CC Switch 本地代理接入、“首个提问由 Claude 指挥、后续交由 DSH”的派发逻辑；ev-2 为执行代理自述，按验收规则不采信。故不足以判 pass，也不足以判 fail。 |
 | 构建 / 测试 / lint 是否通过 (`verification`) | **pass** | tool/call#2080 → tool/result#2083 | 最后一次验证运行 node --test "test/acceptance/*.test.js" 结果为 tests 22 / pass 22 / fail 0，此前的 1 fail 与 2 fail 运行已被后续修复覆盖，按检查定义判 pass；局限性：仅覆盖 D:\XiangMu\claude-on-dsh 下的 acceptance 测试套件，证据中无 lint、构建或插件端到端（侧栏渲染、CLI/桌面版派发）验证。 |
 | 是否越权改动无关文件 (`scope`) | **fail** | tool/call#312<br>tool/call#390<br>tool/call#402<br>tool/call#1145<br>tool/call#1157<br>tool/call#1445<br>tool/call#1764<br>git@bf76af65922cb061a4754080b517b60f108fb9e3 | 允许路径仅限工作区内任意路径，但实际写入/修改集中在 D:\XiangMu\ClaudeCommander、D:\XiangMu\claude-on-dsh、D:\XiangMu\claude-on-dsh-probe 与 C:\Users\...\AppData\Local\Temp；cmd-12 显示工作区内仅新增 .dsh/acceptance 两个文件，其余 28 个改动均在 workspace 外，且证据中无用户授权在工作区外建目录/改文件的记录，判 fail。另存在 ClaudeCommander 与 claude-on-dsh 两套并行实现及 probe 目录，交付范围冗余。 |
 
@@ -32,7 +32,7 @@
 - locator：`user/message#16`
 
 ```text
-创建一个带左侧栏入口的 DSH 插件。这个插件是能调用本机的claude code cli或者桌面版给本dsh派发任务和新项目首个提问由claude指挥，后续全部交由dsh完成项目的插件。claude code cli的位置自行找，claude桌面版的位置在C:\Program Files\WindowsApps\Claude_3.6556.2.0_x64__pzs8sxrjxfjjc\app，但是桌面版永的apikey是"D:\CC Switch\cc-switch.exe"这个软件的
+创建一个带左侧栏入口的 DSH 插件。这个插件是能调用本机的claude code cli或者桌面版给本dsh派发任务和新项目首个提问由claude指挥，后续全部交由dsh完成项目的插件。claude code cli的位置自行找，claude桌面版的位置在C:\Program Files\WindowsApps\Claude_3.6556.2.0_x64__pzs8sxrjxfjjc\app，桌面版通过 D:\\CC Switch\\cc-switch.exe 的本地代理连接。
 ```
 
 ### file-6 · file
@@ -180,7 +180,7 @@ write C:\Users\Administrator.WIN-BOIQRMNB390\AppData\Local\Temp\gh-release.mjs
 
 - 无 client.js/index.js 的内容级证据或运行截图，无法验证“带左侧栏入口”是否真实实现并渲染。
 - 无证据显示 Claude Code CLI 的定位/发现逻辑（任务要求“位置自行找”）。
-- 无证据显示桌面版路径 C:\Program Files\WindowsApps\Claude_3.6556.2.0_x64__pzs8sxrjxfjjc\app 与 D:\CC Switch\cc-switch.exe 的 API key 接入实现。
+- 无证据显示桌面版路径 C:\Program Files\WindowsApps\Claude_3.6556.2.0_x64__pzs8sxrjxfjjc\app 与 D:\CC Switch\cc-switch.exe 的 本地代理接入实现。
 - 无证据显示“新项目首个提问由 Claude 指挥、后续全部交由 DSH 完成”的派发闭环。
 - 无法确认最终交付目录：ClaudeCommander 与 claude-on-dsh 两套实现并存，另有 claude-on-dsh-probe。
 - 无插件已在 DSH 中安装/加载的证据（无侧栏入口实际可见的验证记录）。

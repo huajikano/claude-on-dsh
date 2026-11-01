@@ -432,7 +432,6 @@ window.__ModuleLoader__.load({
       let response
       try {
         response = await fetch(url, {
-          credentials: 'include',
           headers: { 'content-type': 'application/json' },
           signal: signal || timeoutSignal(timeoutMs),
           ...fetchOptions,
@@ -3626,6 +3625,104 @@ window.__ModuleLoader__.load({
   background: var(--dsw-alias-bg-overlay); color: var(--dsw-alias-label-primary);
   border: 1px solid var(--dsw-alias-border-l2); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
   font-size: 12px;
+}
+
+/* Claude Desktop-inspired surface: warm paper, serif headings, soft ink. */
+.cc-panel {
+  --cc-ink: #2f2a25;
+  --cc-muted: #6f6a63;
+  --cc-line: #e6ded1;
+  --cc-paper: #fffdf8;
+  --cc-cream: #f7f4ed;
+  --cc-accent: #d97757;
+  gap: 16px;
+  padding: 28px clamp(18px, 3.5vw, 40px) 72px;
+  background: var(--cc-cream);
+  color: var(--cc-ink);
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+.cc-panel > * { max-inline-size: 1080px; }
+.cc-hero {
+  padding: 20px 22px;
+  border-color: var(--cc-line);
+  border-radius: 18px;
+  background: linear-gradient(145deg, #fbf7ef, #f3ece1);
+  box-shadow: none;
+}
+.cc-mark { background: #f3e5db; border-color: #e7c9b8; border-radius: 12px; }
+.cc-heading {
+  font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
+  font-size: 25px; font-weight: 600; letter-spacing: -0.02em;
+}
+.cc-subtitle { color: var(--cc-muted); }
+.cc-chips { gap: 6px; }
+.cc-chip, .cc-budgetChip {
+  border-color: var(--cc-line); background: #fffaf2; color: var(--cc-muted);
+}
+.cc-sessionChip { border-color: #e8c9b8; background: #fff6ef; color: var(--cc-muted); }
+.cc-steps {
+  padding: 10px 14px; border-color: var(--cc-line); border-radius: 14px;
+  background: #fffaf2;
+}
+.cc-step.active b { background: var(--cc-accent); border-color: var(--cc-accent); }
+.cc-step.done b { background: #7f8b72; border-color: #7f8b72; }
+.cc-card {
+  padding: 18px 20px; border-color: var(--cc-line); border-radius: 16px;
+  background: var(--cc-paper); box-shadow: 0 1px 1px rgba(47, 42, 37, 0.03);
+}
+.cc-cardTitle {
+  font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
+  font-size: 15px; font-weight: 600;
+}
+.cc-sectionTitle {
+  font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
+  font-size: 13px; font-weight: 600;
+}
+.cc-input, .cc-textarea, .cc-select {
+  border-color: #ddd3c6; border-radius: 10px; background: #fffdf8; color: var(--cc-ink);
+}
+.cc-input:focus, .cc-textarea:focus, .cc-select:focus {
+  outline: none; border-color: var(--cc-accent);
+  box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.13);
+}
+.cc-btn { border-radius: 10px; }
+.cc-btn.primary { background: #2f2a25; color: #fffdf8; }
+.cc-btn.primary:hover:not(:disabled) { background: #1f1b17; filter: none; }
+.cc-btn.ghost { border-color: #ddd3c6; background: #fffaf2; color: var(--cc-ink); }
+.cc-btn.ghost:hover:not(:disabled) { background: #f5eee4; }
+.cc-btn.link { color: #b45f43; }
+.cc-question {
+  border-inline-start-color: var(--cc-accent); border-radius: 10px;
+  background: #fdf3eb;
+}
+.cc-option.on { border-color: var(--cc-accent); background: #fbeade; }
+.cc-historyDetails > summary, .cc-advanced > summary { color: var(--cc-muted); }
+.cc-modal {
+  border-color: var(--cc-line); border-radius: 16px; background: #fffdf8;
+}
+.cc-modalBackdrop { background: rgba(47, 42, 37, 0.24); backdrop-filter: blur(3px); }
+@media (max-width: 940px) {
+  .cc-panel { padding: 18px 14px 56px; }
+  .cc-hero { border-radius: 14px; }
+  .cc-chips { justify-content: flex-start; }
+}
+@media (max-width: 640px) {
+  .cc-heading { font-size: 22px; }
+  .cc-card { padding: 14px; }
+  .cc-toolbar { align-items: stretch; }
+  .cc-steps { flex-wrap: nowrap; overflow: auto; }
+}
+@media (prefers-color-scheme: dark) {
+  .cc-panel {
+    --cc-ink: #f3ede4; --cc-muted: #b9afa2; --cc-line: #4a433b;
+    --cc-paper: #282521; --cc-cream: #1f1d1a;
+  }
+  .cc-hero { background: linear-gradient(145deg, #2d2924, #25211d); }
+  .cc-chip, .cc-budgetChip, .cc-steps, .cc-input, .cc-textarea, .cc-select, .cc-btn.ghost {
+    background: #2a2621; color: var(--cc-ink); border-color: #4a433b;
+  }
+  .cc-card, .cc-modal { background: #282521; }
+  .cc-question { background: #3a2c24; }
 }
 `
 
