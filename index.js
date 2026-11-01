@@ -947,6 +947,59 @@ function projectKey(cwd) {
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved
 }
 
+const trustedProjects = new Set()
+
+function claudeConfigFile() {
+  const dir = text(process.env.CLAUDE_CONFIG_DIR)
+  return dir ? path.join(dir, '.claude.json') : path.join(os.homedir(), '.claude.json')
+}
+
+export async function ensureClaudeTrust(cwd) {
+  const resolved = path.resolve(String(cwd || ''))
+  const key = resolved.replace(/\\/g, '/')
+  const cacheKey = key.toLowerCase()
+  if (trustedProjects.has(cacheKey)) return { changed: false }
+  const file = claudeConfigFile()
+  let raw
+  try {
+    raw = await readFile(file, 'utf8')
+  } catch (error) {
+    return { changed: false, error: `无法读取 ${file}：${error.message}` }
+  }
+  let data
+  try {
+    data = JSON.parse(raw.replace(/^\uFEFF/, ''))
+  } catch (error) {
+    return { changed: false, error: `无法解析 ${file}：${error.message}` }
+  }
+  if (!data || typeof data !== 'object') {
+    return { changed: false, error: `${file} 不是对象` }
+  }
+  if (!data.projects || typeof data.projects !== 'object') data.projects = {}
+  let actualKey = Object.keys(data.projects).find(
+    (name) => name.toLowerCase() === cacheKey,
+  )
+  if (!actualKey) actualKey = key
+  const current = data.projects[actualKey]
+  if (current && current.hasTrustDialogAccepted === true) {
+    trustedProjects.add(cacheKey)
+    return { changed: false }
+  }
+  data.projects[actualKey] = {
+    ...(current && typeof current === 'object' ? current : {}),
+    hasTrustDialogAccepted: true,
+  }
+  try {
+    const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`
+    await writeFile(temporary, `${JSON.stringify(data, null, 2)}\n`, 'utf8')
+    await rename(temporary, file)
+    trustedProjects.add(cacheKey)
+    return { changed: true }
+  } catch (error) {
+    return { changed: false, error: `无法写入 ${file}：${error.message}` }
+  }
+}
+
 async function readClaudeSessions() {
   try {
     const parsed = JSON.parse(
@@ -1103,7 +1156,16 @@ export function apply(ctx, config = {}) {
     return snapshot.over
   }
 
-  async function runClaudeFor({ cwd, label, ...options }) {    const key = projectKey(cwd)
+  async function runClaudeFor({ cwd, label, ...options }) {
+    try {
+      const trust = await ensureClaudeTrust(cwd)
+      if (trust.error) {
+        ctx.logger?.warn?.(`[claude-on-dsh] 项目信任检查失败：${trust.error}`)
+      }
+    } catch (error) {
+      ctx.logger?.warn?.(`[claude-on-dsh] 项目信任检查异常：${error.message}`)
+    }
+    const key = projectKey(cwd)
     const sessions = await readClaudeSessions()
     let resume = sessions[key] && sessions[key].sessionId
     for (let attempt = 0; attempt < 2; attempt += 1) {
