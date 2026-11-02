@@ -20,7 +20,7 @@
    固定版本（推荐）：
 
    ```text
-   github:huajikano/claude-on-dsh#v1.3.4
+   github:huajikano/claude-on-dsh#v1.3.6
    ```
 
    等价写法：
@@ -34,24 +34,24 @@
 
 要求：Windows；本机已安装 Claude Code CLI（或安装后在插件配置里填 `claudeCliPath`）；DSH 安装插件需要 Full access 或批准。仓库公开，无需登录。插件是纯 JavaScript bundle，没有构建步骤。
 
-> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 1.3.4。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
+> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 1.3.6。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
 
 ## 更新已安装的版本（重要）
 
 DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 bundle**；直接再次 Add 会提示 `already-installed`，这不是插件版本号没改，而是管理器没有原地升级路径。
 
-更新到 1.3.4：
+更新到 1.3.6：
 
 1. 打开 DSH → **Plugins**；
 2. 找到 **Claude on DSH**，点 **Remove**（只点禁用不够，必须移除依赖）；
 3. 重新 **Add plugin**，填入：
    ```text
-   github:huajikano/claude-on-dsh#v1.3.4
+   github:huajikano/claude-on-dsh#v1.3.6
    ```
 4. 安装后启用，重启/刷新 DSH；
 5. 如果 profile 里的配置被清除，按下面「配置」一节重新填 `claudeCliPath` 等值。
 
-> 不要用不带 `#v1.3.4` 的 `github:huajikano/claude-on-dsh` 做更新：那会跟随默认分支，无法判断装的是哪一版。固定 tag 更可控。
+> 不要用不带 `#v1.3.6` 的 `github:huajikano/claude-on-dsh` 做更新：那会跟随默认分支，无法判断装的是哪一版。固定 tag 更可控。
 
 ## 工作流
 
@@ -114,6 +114,19 @@ DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 
 选择「自定义内容」时，你输入的验收要求会交给 Claude，Claude 结合项目、改动、测试命令与输出生成意见，再把「结论 + 意见 + 关键证据」发回原 DSH 会话。选择「跳过」不调用 Claude。
 
 > 首次在某个项目目录调用 Claude 前，插件会检查 `~/.claude.json`，缺少 `hasTrustDialogAccepted` 时自动补上，避免非交互 CLI 卡在信任对话框；已有项目和大小写并存的模型键会保留。
+
+## 开发文档（软件角色审批）
+
+「记录」弹窗里有 **开发文档** 入口，流程是：
+
+1. **导出模板**：生成 Markdown 开发文档模板，带项目目录、固定章节和角色审批表；
+2. **填写/导入**：只需要填 7 个小节，其中“要做什么、需要开发的功能、已有技术/代码/资源”必填；其余可留空；
+3. **Claude 预审**：Claude 补全需求拆解、技术方案、里程碑、风险、验收标准和待确认问题，并按软件项目角色审批：
+   - 必审：用户/发起人、产品、技术、开发、测试；
+   - 条件启用：安全与合规、运维/交付、采购/财务（项目不涉及时标记“不适用”）；
+4. **交给 DSH**：只有必审角色全部“批准”、条件角色“批准”或“不适用”才放行；任一角色驳回或需补充都不能交付。可以选择新建 DSH 会话，或发到同项目的已有会话。
+
+模板中 `【用户填写】` 是用户输入位；`【Claude 预审填写】` 由 Claude 补全；审批规则和预审指令是固定提示词。必填占位符未替换完会直接拒绝预审；修改已批准文档后必须重新审批。
 
 ## 本机集成
 

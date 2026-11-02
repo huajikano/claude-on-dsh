@@ -1,6 +1,6 @@
 {
   "name": "claude-on-dsh",
-  "version": "1.3.4",
+  "version": "1.3.6",
   "private": true,
   "description": "Claude on DSH: Claude Code CLI or Desktop plans a project, hands it to DSH, and adds editable opening questions, handoffs, and post-turn Claude review choices.",
   "type": "module",

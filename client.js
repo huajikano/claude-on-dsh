@@ -110,6 +110,42 @@ window.__ModuleLoader__.load({
         recordsDelete: '删除',
         recordsDeleteYes: '确认删除',
         recordsDeleteNo: '取消',
+        devDoc: '开发文档',
+        devDocApproved: '已批准',
+        devDocRejected: '已驳回',
+        devDocNeedsInfo: '需补充',
+        devDocDraft: '草稿',
+        devDocFilled: '开发文档',
+        devDocEmpty: '导出模板，填写后导入',
+        devDocExportTemplate: '导出模板',
+        devDocImport: '导入 .md',
+        devDocSave: '保存草稿',
+        devDocExportCurrent: '导出当前文档',
+        devDocProject: '项目目录',
+        devDocNeedProject: '请先在项目设定里选择项目目录。',
+        devDocPlaceholder: '先导出开发文档模板，填写后导入；也可以直接粘贴 Markdown。',
+        devDocReview: 'Claude 预审',
+        devDocSend: '交给 DSH',
+        devDocTarget: '交付方式',
+        devDocNewSession: '新建 DSH 会话',
+        devDocVerdict: '审批结论',
+        devDocBlockers: '阻塞项',
+        devDocQuestions: '需补充材料',
+        devDocApprove: '批准',
+        devDocNeedsInfoDecision: '需补充',
+        devDocNotApplicable: '不适用',
+        devDocConditional: '有条件同意（按未批准）',
+        devDocReject: '驳回',
+        devDocTemplateExported: '模板已导出',
+        devDocImported: '已导入，请检查后预审',
+        devDocSaved: '草稿已保存',
+        devDocUnresolved: '还有未替换的用户填写项',
+        devDocApprovedNotice: '角色审批通过，可以交给 DSH。',
+        devDocRejectedNotice: '未通过审批，请按驳回原因修改后重新预审。',
+        devDocNeedsInfoNotice: '材料不足，请补充后重新预审。',
+        devDocNotApproved: '文档尚未通过硬审批，不能交给 DSH。',
+        devDocSentNew: '已新建 DSH 会话并交付开发文档',
+        devDocSentExisting: '已把开发文档发到目标会话',
         reviewList: '验收记录',
         reviewListEmpty: '还没有验收记录。',
         recordContents: '首问 / 派发内容',
@@ -306,6 +342,42 @@ window.__ModuleLoader__.load({
         recordsDelete: 'Delete',
         recordsDeleteYes: 'Confirm delete',
         recordsDeleteNo: 'Cancel',
+        devDoc: 'Development document',
+        devDocApproved: 'Approved',
+        devDocRejected: 'Rejected',
+        devDocNeedsInfo: 'Needs info',
+        devDocDraft: 'Draft',
+        devDocFilled: 'Development document',
+        devDocEmpty: 'Export the template, fill it in, then import',
+        devDocExportTemplate: 'Export template',
+        devDocImport: 'Import .md',
+        devDocSave: 'Save draft',
+        devDocExportCurrent: 'Export current document',
+        devDocProject: 'Project directory',
+        devDocNeedProject: 'Select a project directory first.',
+        devDocPlaceholder: 'Export the template, fill it in, then import; you can also paste Markdown directly.',
+        devDocReview: 'Claude pre-review',
+        devDocSend: 'Hand to DSH',
+        devDocTarget: 'Delivery',
+        devDocNewSession: 'New DSH session',
+        devDocVerdict: 'Verdict',
+        devDocBlockers: 'Blockers',
+        devDocQuestions: 'Missing materials',
+        devDocApprove: 'Approve',
+        devDocNeedsInfoDecision: 'Needs info',
+        devDocNotApplicable: 'Not applicable',
+        devDocConditional: 'Conditional (treated as not approved)',
+        devDocReject: 'Reject',
+        devDocTemplateExported: 'Template exported',
+        devDocImported: 'Imported; review it before pre-review',
+        devDocSaved: 'Draft saved',
+        devDocUnresolved: 'Unresolved user-fill placeholders',
+        devDocApprovedNotice: 'All roles approved; ready to hand to DSH.',
+        devDocRejectedNotice: 'Rejected; fix the blockers and run pre-review again.',
+        devDocNeedsInfoNotice: 'More information is required; resubmit after filling it in.',
+        devDocNotApproved: 'The document has not passed the hard approval gate.',
+        devDocSentNew: 'Created a new DSH session and handed over the document',
+        devDocSentExisting: 'Sent the document to the target session',
         reviewList: 'Acceptance records',
         reviewListEmpty: 'No acceptance records yet.',
         recordContents: 'First-question / handoff content',
@@ -870,6 +942,11 @@ window.__ModuleLoader__.load({
         resetClaudeSession,
         getUsage,
         getReviews,
+        getDevDoc,
+        getDevDocTemplate,
+        saveDevDoc,
+        refineDevDoc,
+        sendDevDoc,
       } = props
       const tt = useCallback(
         (key, vars) => {
@@ -933,6 +1010,13 @@ window.__ModuleLoader__.load({
       const [reviewSelected, setReviewSelected] = useState(null)
       const [recordBusy, setRecordBusy] = useState(false)
       const [recordError, setRecordError] = useState('')
+      const [devDocOpen, setDevDocOpen] = useState(false)
+      const [devDoc, setDevDoc] = useState(null)
+      const [devDocDraft, setDevDocDraft] = useState('')
+      const [devDocBusy, setDevDocBusy] = useState('')
+      const [devDocError, setDevDocError] = useState('')
+      const [devDocNotice, setDevDocNotice] = useState('')
+      const [devDocSession, setDevDocSession] = useState('')
       const [reviewSettings, setReviewSettings] = useState({
         autoPrompt: true,
         defaultAction: 'none',
@@ -1345,6 +1429,7 @@ window.__ModuleLoader__.load({
         if (kind === 'first-question-sent') return tt('recordFirstSent')
         if (kind === 'dispatch') return tt('recordDispatch')
         if (kind === 'acceptance') return tt('recordAcceptance')
+        if (kind === 'devdoc') return tt('devDoc')
         return kind
       }
 
@@ -1352,14 +1437,19 @@ window.__ModuleLoader__.load({
         setRecordsOpen(true)
         setRecordSelected(null)
         setReviewSelected(null)
+        setDevDocOpen(false)
+        setDevDocError('')
+        setDevDocNotice('')
         setRecordBusy(true)
         setRecordError('')
         try {
-          const [recordsResult, sessionsResult, reviewsResult] = await Promise.allSettled([
-            listRecords(),
-            listClaudeSessions(),
-            getReviews(),
-          ])
+          const [recordsResult, sessionsResult, reviewsResult, devDocResult] =
+            await Promise.allSettled([
+              listRecords(),
+              listClaudeSessions(),
+              getReviews(),
+              form.projectDir ? getDevDoc(form.projectDir) : Promise.resolve({ doc: null }),
+            ])
           if (recordsResult.status === 'fulfilled') {
             setRecordItems(
               Array.isArray(recordsResult.value.items) ? recordsResult.value.items : [],
@@ -1375,6 +1465,14 @@ window.__ModuleLoader__.load({
           if (reviewsResult.status === 'fulfilled') {
             setReviewEntries(
               Array.isArray(reviewsResult.value.entries) ? reviewsResult.value.entries : [],
+            )
+          }
+          if (devDocResult.status === 'fulfilled') {
+            setDevDoc(devDocResult.value && devDocResult.value.doc ? devDocResult.value.doc : null)
+            setDevDocDraft(
+              devDocResult.value && devDocResult.value.doc
+                ? devDocResult.value.doc.content || ''
+                : '',
             )
           }
         } catch (error) {
@@ -1415,6 +1513,362 @@ window.__ModuleLoader__.load({
         setRecordsOpen(false)
         setRecordSelected(null)
         setReviewSelected(null)
+        setDevDocOpen(false)
+      }
+
+      function devDocStatusLabel(status) {
+        if (status === 'approved') return tt('devDocApproved')
+        if (status === 'rejected') return tt('devDocRejected')
+        if (status === 'needs_info') return tt('devDocNeedsInfo')
+        return tt('devDocDraft')
+      }
+
+      function downloadText(filename, content) {
+        const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = filename
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+      }
+
+      async function exportDevDocTemplate() {
+        setDevDocBusy('template')
+        setDevDocError('')
+        try {
+          const data = await getDevDocTemplate({
+            projectDir: form.projectDir,
+            projectName: form.projectName,
+            goal: form.goal,
+          })
+          downloadText(data.filename || '开发文档模板.md', data.content || '')
+          setDevDocNotice(tt('devDocTemplateExported'))
+        } catch (error) {
+          setDevDocError(error.message)
+        } finally {
+          setDevDocBusy('')
+        }
+      }
+
+      function exportCurrentDevDoc() {
+        const content = devDocDraft || (devDoc && devDoc.content) || ''
+        if (!content.trim()) {
+          setDevDocError(tt('devDocEmpty'))
+          return
+        }
+        downloadText(`${form.projectName || '项目'}-开发文档.md`, content)
+      }
+
+      async function importDevDocFile() {
+        if (!form.projectDir) {
+          setDevDocError(tt('devDocNeedProject'))
+          return
+        }
+        const input = document.createElement('input')
+        input.type = 'file'
+        input.accept = '.md,.markdown,.txt,text/markdown,text/plain'
+        input.onchange = async () => {
+          const file = input.files && input.files[0]
+          if (!file) return
+          setDevDocBusy('import')
+          setDevDocError('')
+          try {
+            const content = await file.text()
+            const data = await saveDevDoc({
+              projectDir: form.projectDir,
+              title: form.projectName,
+              content,
+            })
+            setDevDoc(data.doc)
+            setDevDocDraft(data.doc.content || '')
+            setDevDocNotice(tt('devDocImported'))
+          } catch (error) {
+            setDevDocError(error.message)
+          } finally {
+            setDevDocBusy('')
+          }
+        }
+        input.click()
+      }
+
+      async function saveCurrentDevDoc() {
+        if (!form.projectDir) {
+          setDevDocError(tt('devDocNeedProject'))
+          return
+        }
+        setDevDocBusy('save')
+        setDevDocError('')
+        try {
+          const data = await saveDevDoc({
+            projectDir: form.projectDir,
+            title: form.projectName,
+            content: devDocDraft,
+          })
+          setDevDoc(data.doc)
+          setDevDocDraft(data.doc.content || '')
+          setDevDocNotice(tt('devDocSaved'))
+        } catch (error) {
+          setDevDocError(error.message)
+        } finally {
+          setDevDocBusy('')
+        }
+      }
+
+      async function reviewCurrentDevDoc() {
+        if (!form.projectDir) {
+          setDevDocError(tt('devDocNeedProject'))
+          return
+        }
+        const unresolved = [...new Set(devDocDraft.match(/\{\{[^}]+\}\}/g) || [])]
+        if (unresolved.length > 0) {
+          setDevDocError(
+            `${tt('devDocUnresolved')} ${unresolved.length}：${unresolved.slice(0, 5).join('、')}`,
+          )
+          return
+        }
+        setDevDocBusy('review')
+        setDevDocError('')
+        setDevDocNotice('')
+        try {
+          const data = await refineDevDoc({
+            projectDir: form.projectDir,
+            projectName: form.projectName,
+            title: form.projectName,
+            content: devDocDraft,
+          })
+          setDevDoc(data.doc)
+          setDevDocDraft(data.doc.content || '')
+          setDevDocNotice(
+            data.doc.status === 'approved'
+              ? tt('devDocApprovedNotice')
+              : data.doc.status === 'needs_info'
+                ? tt('devDocNeedsInfoNotice')
+                : tt('devDocRejectedNotice'),
+          )
+        } catch (error) {
+          setDevDocError(error.message)
+        } finally {
+          setDevDocBusy('')
+        }
+      }
+
+      async function deliverCurrentDevDoc() {
+        if (!form.projectDir) {
+          setDevDocError(tt('devDocNeedProject'))
+          return
+        }
+        if (!devDoc || devDoc.status !== 'approved') {
+          setDevDocError(tt('devDocNotApproved'))
+          return
+        }
+        setDevDocBusy('send')
+        setDevDocError('')
+        try {
+          const result = await sendDevDoc({
+            projectDir: form.projectDir,
+            sessionId: devDocSession,
+          })
+          setToast(
+            result.existing ? tt('devDocSentExisting') : tt('devDocSentNew'),
+          )
+          if (result.sessionId) openSession(result.sessionId)
+          closeRecords()
+        } catch (error) {
+          setDevDocError(error.message)
+        } finally {
+          setDevDocBusy('')
+        }
+      }
+
+      function renderDevDocView() {
+        const status = devDoc ? devDoc.status : 'draft'
+        const sessions = allSessions
+          .filter(
+            (item) =>
+              !item.cwd ||
+              normalizeProject(item.cwd) === normalizeProject(form.projectDir || ''),
+          )
+          .slice(0, 40)
+        return h(
+          'div',
+          { className: 'cc-devDoc' },
+          h(
+            'div',
+            { className: 'cc-devDocHead' },
+            h(
+              'div',
+              { className: 'cc-devDocTitle' },
+              h('span', { className: 'cc-cardTitle' }, tt('devDoc')),
+              h(
+                'span',
+                { className: `cc-devDocStatus ${status}` },
+                devDocStatusLabel(status),
+              ),
+            ),
+            h(
+              Button,
+              { variant: 'link', onClick: () => setDevDocOpen(false) },
+              tt('recordsBack'),
+            ),
+          ),
+          h(
+            'div',
+            { className: 'cc-actions' },
+            h(
+              Button,
+              {
+                variant: 'ghost',
+                busy: devDocBusy === 'template',
+                onClick: exportDevDocTemplate,
+              },
+              tt('devDocExportTemplate'),
+            ),
+            h(
+              Button,
+              { variant: 'ghost', busy: devDocBusy === 'import', onClick: importDevDocFile },
+              tt('devDocImport'),
+            ),
+            h(
+              Button,
+              {
+                variant: 'ghost',
+                busy: devDocBusy === 'save',
+                onClick: saveCurrentDevDoc,
+                disabled: !form.projectDir,
+              },
+              tt('devDocSave'),
+            ),
+            devDocDraft.trim()
+              ? h(Button, { variant: 'link', onClick: exportCurrentDevDoc }, tt('devDocExportCurrent'))
+              : null,
+          ),
+          form.projectDir
+            ? h('div', { className: 'cc-hint' }, `${tt('devDocProject')}：${form.projectDir}`)
+            : h('div', { className: 'cc-inlineWarn' }, tt('devDocNeedProject')),
+          h('textarea', {
+            className: 'cc-textarea cc-devDocEditor',
+            value: devDocDraft,
+            spellCheck: false,
+            placeholder: tt('devDocPlaceholder'),
+            onChange: (event) => {
+              const value = event.target.value
+              setDevDocDraft(value)
+              if (devDoc) setDevDoc({ ...devDoc, status: 'draft' })
+            },
+          }),
+          h(
+            'div',
+            { className: 'cc-actions' },
+            h(
+              Button,
+              {
+                variant: 'primary',
+                busy: devDocBusy === 'review',
+                disabled: !form.projectDir || !devDocDraft.trim(),
+                onClick: reviewCurrentDevDoc,
+              },
+              tt('devDocReview'),
+            ),
+            h(
+              Button,
+              {
+                variant: 'primary',
+                busy: devDocBusy === 'send',
+                disabled:
+                  !form.projectDir || !devDoc || devDoc.status !== 'approved' || devDocBusy,
+                onClick: deliverCurrentDevDoc,
+              },
+              tt('devDocSend'),
+            ),
+          ),
+          h(
+            'label',
+            { className: 'cc-field' },
+            h('span', { className: 'cc-label' }, tt('devDocTarget')),
+            h(
+              'select',
+              {
+                className: 'cc-select',
+                value: devDocSession,
+                onChange: (event) => setDevDocSession(event.target.value),
+              },
+              h('option', { value: '' }, tt('devDocNewSession')),
+              sessions.map((item) =>
+                h(
+                  'option',
+                  { value: item.sessionId, key: item.sessionId },
+                  `${item.title || item.sessionId} · ${item.sessionId.slice(0, 8)}`,
+                ),
+              ),
+            ),
+          ),
+          devDocError
+            ? h('div', { className: 'cc-notice' }, h('div', { className: 'cc-noticeBody' }, devDocError))
+            : null,
+          devDocNotice ? h('div', { className: 'cc-inlineWarn' }, devDocNotice) : null,
+          devDoc && devDoc.status !== 'draft'
+            ? h(
+                'div',
+                { className: 'cc-devDocReview' },
+                h(
+                  'div',
+                  { className: 'cc-devDocVerdict' },
+                  `${tt('devDocVerdict')}：${String(devDoc.verdict || '').toUpperCase()}`,
+                  devDoc.summary ? h('p', null, devDoc.summary) : null,
+                ),
+                Array.isArray(devDoc.blockers) && devDoc.blockers.length
+                  ? h(
+                      'div',
+                      null,
+                      h('div', { className: 'cc-label' }, tt('devDocBlockers')),
+                      h(
+                        'ul',
+                        { className: 'cc-ul' },
+                        devDoc.blockers.map((item, index) => h('li', { key: index }, item)),
+                      ),
+                    )
+                  : null,
+                Array.isArray(devDoc.questions) && devDoc.questions.length
+                  ? h(
+                      'div',
+                      null,
+                      h('div', { className: 'cc-label' }, tt('devDocQuestions')),
+                      h(
+                        'ul',
+                        { className: 'cc-ul' },
+                        devDoc.questions.map((item, index) => h('li', { key: index }, item)),
+                      ),
+                    )
+                  : null,
+                h(
+                  'div',
+                  { className: 'cc-devDocDepartments' },
+                  (devDoc.departments || []).map((item) =>
+                    h(
+                      'div',
+                      { className: `cc-devDocDept ${item.decision}`, key: item.id },
+                      h('strong', null, item.name),
+                      h(
+                        'span',
+                        null,
+                        item.decision === 'approve'
+                          ? tt('devDocApprove')
+                          : item.decision === 'needs_info'
+                            ? tt('devDocNeedsInfoDecision')
+                            : item.decision === 'not_applicable'
+                              ? tt('devDocNotApplicable')
+                              : tt('devDocReject'),
+                      ),
+                      h('small', null, item.reason),
+                    ),
+                  ),
+                ),
+              )
+            : null,
+        )
       }
 
       function openCurrentFirstQuestion() {
@@ -2795,7 +3249,9 @@ window.__ModuleLoader__.load({
           ? h(
               Modal,
               { title: tt('records'), onClose: closeRecords },
-              reviewSelected
+              devDocOpen
+                ? renderDevDocView()
+                : reviewSelected
                 ? h(
                     'div',
                     { className: 'cc-recordView' },
@@ -2873,6 +3329,27 @@ window.__ModuleLoader__.load({
                     'div',
                     { className: 'cc-recordList' },
                     recordBusy ? h('div', { className: 'cc-hint' }, tt('recordsLoading')) : null,
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'cc-recordItem cc-devDocEntry',
+                        onClick: () => setDevDocOpen(true),
+                      },
+                      h('span', { className: 'cc-recordKind' }, tt('devDoc')),
+                      h(
+                        'span',
+                        { className: 'cc-recordTitle' },
+                        devDoc
+                          ? devDoc.title || tt('devDocFilled')
+                          : tt('devDocEmpty'),
+                      ),
+                      h(
+                        'span',
+                        { className: `cc-devDocStatus ${devDoc ? devDoc.status : 'draft'}` },
+                        devDocStatusLabel(devDoc ? devDoc.status : 'draft'),
+                      ),
+                    ),
                     h(
                       'div',
                       { className: 'cc-usageLine' },
@@ -3110,6 +3587,29 @@ window.__ModuleLoader__.load({
         listSessions: () => request('/sessions'),
         listRecords: () => request('/records'),
         getReviews: () => request('/reviews'),
+        getDevDoc: (projectDir) =>
+          request(`/devdoc?projectDir=${encodeURIComponent(projectDir || '')}`),
+        getDevDocTemplate: (params) =>
+          request(
+            `/devdoc/template?projectDir=${encodeURIComponent(params.projectDir || '')}&projectName=${encodeURIComponent(params.projectName || '')}&goal=${encodeURIComponent(params.goal || '')}`,
+          ),
+        saveDevDoc: (payload) =>
+          request('/devdoc', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          }),
+        refineDevDoc: (payload) =>
+          request('/devdoc/refine', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            timeoutMs: 240_000,
+          }),
+        sendDevDoc: (payload) =>
+          request('/devdoc/send', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            timeoutMs: 120_000,
+          }),
         listClaudeSessions: () => request('/claude-sessions'),
         getUsage: () => request('/usage'),
         deleteClaudeSession: (payload) =>
@@ -3619,6 +4119,37 @@ window.__ModuleLoader__.load({
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11.5px; line-height: 1.6;
 }
+.cc-devDoc { display: flex; flex-direction: column; gap: 12px; min-block-size: 0; }
+.cc-devDocHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.cc-devDocTitle { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cc-devDocStatus {
+  display: inline-flex; align-items: center; min-block-size: 20px; padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px;
+  font-size: 10.5px; color: var(--dsw-alias-label-secondary); white-space: nowrap;
+}
+.cc-devDocStatus.approved { color: var(--dsw-alias-state-success-primary); border-color: color-mix(in oklab, var(--dsw-alias-state-success-primary) 40%, transparent); }
+.cc-devDocStatus.rejected { color: var(--dsw-alias-state-error-primary); border-color: color-mix(in oklab, var(--dsw-alias-state-error-primary) 40%, transparent); }
+.cc-devDocStatus.needs_info { color: var(--dsw-alias-state-warn-primary); border-color: color-mix(in oklab, var(--dsw-alias-state-warn-primary) 40%, transparent); }
+.cc-devDocEditor {
+  min-block-size: 300px; max-block-size: 48vh; resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px; line-height: 1.6;
+}
+.cc-devDocReview { display: flex; flex-direction: column; gap: 10px; }
+.cc-devDocVerdict { font-size: 12.5px; }
+.cc-devDocVerdict p { margin: 4px 0 0; color: var(--dsw-alias-label-secondary); white-space: pre-wrap; }
+.cc-devDocDepartments { display: flex; flex-direction: column; gap: 4px; }
+.cc-devDocDept {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 6px 8px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 7px;
+  font-size: 11.5px;
+}
+.cc-devDocDept strong { min-inline-size: 120px; font-weight: 600; }
+.cc-devDocDept small { flex: 1 1 220px; color: var(--dsw-alias-label-secondary); }
+.cc-devDocDept.approve { border-color: color-mix(in oklab, var(--dsw-alias-state-success-primary) 30%, transparent); }
+.cc-devDocDept.reject { border-color: color-mix(in oklab, var(--dsw-alias-state-error-primary) 30%, transparent); }
+.cc-devDocDept.conditional, .cc-devDocDept.needs_info { border-color: color-mix(in oklab, var(--dsw-alias-state-warn-primary) 30%, transparent); }
+.cc-devDocDept.not_applicable { opacity: .72; }
 .cc-toast {
   position: fixed; inset-block-end: 26px; inset-inline: 0; margin-inline: auto; z-index: 60;
   inline-size: fit-content; padding: 7px 14px; border-radius: 999px;

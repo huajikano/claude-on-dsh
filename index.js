@@ -11,7 +11,7 @@
  * The browser half never spawns a process; it talks to these routes only.
  */
 import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { mkdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import net from 'node:net'
@@ -639,6 +639,252 @@ function buildDesktopPrompt({ projectName, projectDir, goal }) {
     '3. 初步计划（3-8 步，每步一个可验收产出）。',
     '4. 一份可直接交给执行代理 DSH 的任务书：背景、目标、范围、交付物、验收标准、约束与风险。',
   ].join('\n')
+}
+
+/* ------------------------------------------------------------------ */
+/* development document (software review board, not government departments) */
+/* ------------------------------------------------------------------ */
+
+const DEV_DOC_ROLES = [
+  ['user', '用户 / 发起人', '是否解决真实问题，目标是否偏离', 'mandatory'],
+  ['product', '产品负责人', '范围、优先级、价值是否成立', 'mandatory'],
+  ['tech', '技术负责人', '技术可行性、架构、依赖是否成立', 'mandatory'],
+  ['dev', '开发负责人', '实现路径、工作量、集成风险是否可控', 'mandatory'],
+  ['qa', '测试 / 质量', '验收标准是否可测试、证据是否充分', 'mandatory'],
+  ['security', '安全与合规', '登录、权限、客户数据、支付、隐私、许可证', 'conditional'],
+  ['ops', '运维 / 交付', '部署、上线、监控、备份、回滚', 'conditional'],
+  ['finance', '采购 / 财务', '外部采购、付费服务、预算审批', 'conditional'],
+]
+const DEV_DOC_MANDATORY = DEV_DOC_ROLES.filter(([, , , kind]) => kind === 'mandatory').map(
+  ([id]) => id,
+)
+const DEV_DOC_CONDITIONAL = DEV_DOC_ROLES.filter(([, , , kind]) => kind === 'conditional').map(
+  ([id]) => id,
+)
+
+function devDocTemplate({ projectName, projectDir, goal } = {}) {
+  const name = text(projectName).trim() || '（可选，默认用目录名）'
+  const dir = text(projectDir).trim() || '（由插件填写）'
+  const brief = text(goal).trim()
+  const mandatory = DEV_DOC_ROLES.filter(([, , , kind]) => kind === 'mandatory')
+  const conditional = DEV_DOC_ROLES.filter(([, , , kind]) => kind === 'conditional')
+  return [
+    `# ${name} 开发文档`,
+    '',
+    '> 版本 / 日期：由 Claude 预审填写',
+    `> 项目目录：${dir}`,
+    '',
+    '## 使用说明（固定，请保留）',
+    '',
+    '1. 你只填写 **第一部分** 的 7 个小节；第 2、3、4 节必填，其余可以留空。',
+    '2. 第二部分、第三部分、第四部分由 Claude 预审补全；不要手写部门审批表。',
+    '3. 这是软件项目评审，不照搬国企部门；只启用与项目真正相关的角色。',
+    '4. 任一必审角色驳回或需补充，整体不能通过，不能交给 DSH。',
+    '5. 修改已批准文档后审批自动失效，必须重新预审。',
+    '',
+    '## 一、用户需求简报（只填这里）',
+    '',
+    '### 1. 项目名称（可选）',
+    `【用户填写】${name}`,
+    '',
+    '### 2. 我想做什么 / 解决什么问题（必填）',
+    `【用户填写】${brief || '{{需求描述}}'}`,
+    '',
+    '### 3. 需要开发的功能（必填）',
+    '【用户填写】{{需要开发的功能}}',
+    '',
+    '### 4. 已有技术、代码和资源（必填）',
+    '【用户填写】{{已有技术代码资源}}',
+    '',
+    '### 5. 参考项目 / 产品 / 链接（可选）',
+    '【用户填写】（想借鉴什么；没有可留空）',
+    '',
+    '### 6. 约束条件（可选）',
+    '【用户填写】（平台、时间、预算、离线、数据、部署环境等；没有可留空）',
+    '',
+    '### 7. 我认为怎样算完成（可选）',
+    '【用户填写】（用你能验证的方式描述；说不清可留空，Claude 会补验收标准）',
+    '',
+    '## 二、Claude 预审补全（用户不要填）',
+    '',
+    '### 2.1 需求理解与范围',
+    '【Claude 预审填写】用一句话复述目标；列出“做什么 / 不做什么”；标出含糊、冲突或缺失处。',
+    '',
+    '### 2.2 功能拆解与用户故事',
+    '【Claude 预审填写】',
+    '',
+    '| 编号 | 功能 | 用户故事 | 优先级 | 依赖 |',
+    '|---|---|---|---|---|',
+    '| F1 |  | 作为…我希望…以便… | 必须/最好有 |  |',
+    '',
+    '### 2.3 技术方案与依赖',
+    '【Claude 预审填写】推荐技术栈与理由；新增依赖/服务/账号/数据；与已有代码的集成点；明确不引入什么。',
+    '',
+    '### 2.4 里程碑',
+    '【Claude 预审填写】',
+    '',
+    '| 阶段 | 产出 | 完成判据 |',
+    '|---|---|---|',
+    '| M1 可运行骨架 |  |  |',
+    '| M2 核心功能 |  |  |',
+    '| M3 验收与交付 |  |  |',
+    '',
+    '### 2.5 风险与应对',
+    '【Claude 预审填写】',
+    '',
+    '| 风险 | 影响 | 应对 |',
+    '|---|---|---|',
+    '|  |  |  |',
+    '',
+    '### 2.6 验收标准',
+    '【Claude 预审填写】每条必须可执行、可观察、可复现；优先写命令、页面行为、输入输出或测试用例；无法验证的项要标出来。',
+    '',
+    '### 2.7 待确认问题',
+    '【Claude 预审填写】只列真正会改变方案的问题；不把“以后可以补”当成放行理由。',
+    '',
+    '## 三、角色审批（Claude 预审填写，固定规则）',
+    '',
+    '### 3.1 必审角色',
+    '',
+    '| 角色 | 审什么 | 结论 | 意见 |',
+    '|---|---|---|---|',
+    ...mandatory.map(([, role, duty]) => `| ${role} | ${duty} | 待审 | |`),
+    '',
+    '### 3.2 条件角色（只有项目涉及时才启用）',
+    '',
+    '| 角色 | 何时启用 | 结论 | 意见 |',
+    '|---|---|---|---|',
+    ...conditional.map(([, role, duty]) => `| ${role} | ${duty} | 不适用 / 待审 | |`),
+    '',
+    '> **固定审批规则**',
+    '> 1. 任一必审角色“驳回”或“需补充”，整体不得通过。',
+    '> 2. 条件角色只有两种合法状态：`不适用`，或 `批准`；启用后驳回同样阻断。',
+    '> 3. 大方向、重大范围、关键技术路线、安全边界、外部支出，任一项没讲清楚，直接驳回。',
+    '> 4. “有条件同意”按未批准处理；“以后补”不是放行理由。',
+    '> 5. 修改已批准文档后，审批自动失效，必须重新预审。',
+    '',
+    '### 3.3 审批结论',
+    '【Claude 预审填写】',
+    '',
+    '- 结论：`APPROVED / REJECTED / NEEDS_INFO`',
+    '- 阻塞项：',
+    '- 需补充材料：',
+    '',
+    '## 四、交给 DSH 的任务摘要（Claude 生成）',
+    '',
+    '【Claude 预审填写】',
+    '',
+    '- 目标：',
+    '- 必做功能：',
+    '- 技术约束：',
+    '- 验收方式：',
+    '- 明确不做：',
+    '- 交付物：',
+    '',
+    '## 五、Claude 预审指令（固定，请保留）',
+    '',
+    '你是软件项目的预审组，不是政府机关。只保留与软件开发真正相关的角色：用户/发起人、产品、技术、开发、测试；安全、运维、采购/财务仅在项目确实涉及时启用。',
+    '',
+    '- 只依据用户简报、项目目录和参考资料，不臆造事实。',
+    '- 用户没写的细节，先列入“待确认问题”，不要替用户做重大决定。',
+    '- 必审角色任一驳回或需补充，整体结论必须是驳回或需补充。',
+    '- 不因为“以后能改”而放行；以后补就是以后埋隐患。',
+    '- 输出完整开发文档，保留固定章节和审批表，补全第二、三、四部分。',
+    '',
+  ].join('\n')
+}
+
+function devDocHash(content) {
+  return createHash('sha256').update(String(content || ''), 'utf8').digest('hex')
+}
+
+function devDocFile(projectDir) {
+  const key = createHash('sha256').update(String(projectDir || ''), 'utf8').digest('hex')
+  return path.join(dshHome(), 'claude-on-dsh', 'devdocs', `${key}.json`)
+}
+
+async function readDevDoc(projectDir) {
+  try {
+    const parsed = JSON.parse((await readFile(devDocFile(projectDir), 'utf8')).replace(/^\uFEFF/, ''))
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+async function writeDevDoc(projectDir, doc) {
+  const file = devDocFile(projectDir)
+  await mkdir(path.dirname(file), { recursive: true })
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`
+  await writeFile(temporary, `${JSON.stringify(doc, null, 2)}\n`, 'utf8')
+  await rename(temporary, file)
+  return doc
+}
+
+function normalizeDevDoc(result, { projectDir, title, content, claudeSessionId }) {
+  const departments = Array.isArray(result.departments) ? result.departments : []
+  const byId = new Map(departments.map((item) => [text(item && item.id), item]))
+  const normalized = DEV_DOC_ROLES.map(([id, name, duty, kind]) => {
+    const item = byId.get(id) || {}
+    const allowed =
+      kind === 'mandatory'
+        ? ['approve', 'reject', 'needs_info']
+        : ['approve', 'reject', 'needs_info', 'not_applicable']
+    const decision = allowed.includes(item.decision)
+      ? item.decision
+      : kind === 'conditional'
+        ? 'not_applicable'
+        : 'reject'
+    return {
+      id,
+      name,
+      duty,
+      kind,
+      decision,
+      reason:
+        text(item.reason).trim() ||
+        (decision === 'not_applicable' ? '本项目不涉及' : '未提供审批意见'),
+    }
+  })
+  const blockers = normalized
+    .filter((item) =>
+      item.kind === 'mandatory'
+        ? item.decision !== 'approve'
+        : item.decision !== 'approve' && item.decision !== 'not_applicable',
+    )
+    .map((item) => `${item.name}：${item.reason}`)
+  const requested = ['approved', 'rejected', 'needs_info'].includes(result.verdict)
+    ? result.verdict
+    : 'rejected'
+  const hasReject = normalized.some((item) => item.decision === 'reject')
+  const hasNeeds = normalized.some((item) => item.decision === 'needs_info')
+  const verdict =
+    requested === 'approved' && blockers.length === 0
+      ? 'approved'
+      : hasReject
+        ? 'rejected'
+        : hasNeeds
+          ? 'needs_info'
+          : requested
+  return {
+    projectDir,
+    title: text(title).trim() || path.basename(projectDir),
+    content,
+    status: verdict === 'approved' ? 'approved' : verdict === 'needs_info' ? 'needs_info' : 'rejected',
+    verdict,
+    departments: normalized,
+    questions: Array.isArray(result.questions)
+      ? result.questions.map((item) => text(item)).filter(Boolean).slice(0, 30)
+      : [],
+    blockers: blockers.concat(
+      Array.isArray(result.blockers) ? result.blockers.map((item) => text(item)).filter(Boolean) : [],
+    ).slice(0, 30),
+    summary: text(result.summary).trim(),
+    contentHash: devDocHash(content),
+    approvedHash: verdict === 'approved' ? devDocHash(content) : '',
+    claudeSessionId: claudeSessionId || '',
+    updatedAt: Date.now(),
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1428,6 +1674,221 @@ export function apply(ctx, config = {}) {
       } catch {}
     }
     return { ...data, claudeSessionId: result.claudeSessionId || '', messageId }
+  }
+
+  async function refineDevDoc({ projectDir, projectName, title, content }) {
+    const dir = expand(projectDir)
+    if (!dir || !isDir(dir)) throw userError('项目目录不存在', '请先选择已存在的项目目录。', 400)
+    const source = text(content).trim()
+    if (!source) throw userError('开发文档为空', '请先导出模板、填写后导入。', 400)
+    const unresolved = [...new Set((source.match(/\{\{[^}]+\}\}/g) || []).slice(0, 20))]
+    if (unresolved.length > 0) {
+      throw userError(
+        `还有 ${unresolved.length} 个用户填写项未替换`,
+        unresolved.join('、'),
+        400,
+      )
+    }
+    const executable = findCli(settings.claudeCliPath)
+    if (!executable) throw userError('没有找到 Claude Code CLI，无法预审开发文档', '', 500)
+    const prompt = [
+      '你是软件项目的预审组，不是政府机关，也不要照搬国企部门。',
+      '只保留与软件开发真正相关的角色，并按项目是否涉及启用条件角色。',
+      '',
+      `项目名称：${text(projectName).trim() || path.basename(dir)}`,
+      `项目目录：${dir}`,
+      '',
+      '角色与职责：',
+      ...DEV_DOC_ROLES.map(
+        ([id, role, duty, kind]) => `- ${id}｜${role}${kind === 'conditional' ? '（条件角色）' : ''}：${duty}`,
+      ),
+      '',
+      '审批规则：',
+      '- 只依据下方文档和项目目录事实；缺失信息列入 questions，不得臆造。',
+      '- 必审角色 decision 只能是 approve / reject / needs_info；任一不是 approve，整体不得 approved。',
+      '- 条件角色只有在确实涉及时才启用；不涉及时 decision 用 not_applicable，涉及时按必审处理。',
+      '- “有条件同意”按未批准处理；大方向、重大范围、关键技术路线、安全边界、外部支出未说清，直接驳回。',
+      '- blockers 写明不能放行的具体原因；questions 写明需要用户补充的材料。',
+      '- document 返回完整 Markdown 文档，保留固定章节、角色审批表和审批规则，补全第二、三、四部分。',
+      '- 不要输出 Markdown 代码围栏，只输出 JSON。',
+      '',
+      '<document>',
+      source,
+      '</document>',
+    ].join('\n')
+    const schema = {
+      type: 'object',
+      properties: {
+        document: { type: 'string' },
+        verdict: { type: 'string', enum: ['approved', 'rejected', 'needs_info'] },
+        departments: {
+          type: 'array',
+          minItems: DEV_DOC_ROLES.length,
+          maxItems: DEV_DOC_ROLES.length,
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', enum: DEV_DOC_ROLES.map(([id]) => id) },
+              name: { type: 'string' },
+              decision: {
+                type: 'string',
+                enum: ['approve', 'reject', 'needs_info', 'not_applicable'],
+              },
+              reason: { type: 'string' },
+            },
+            required: ['id', 'name', 'decision', 'reason'],
+            additionalProperties: false,
+          },
+        },
+        questions: { type: 'array', items: { type: 'string' } },
+        blockers: { type: 'array', items: { type: 'string' } },
+        summary: { type: 'string' },
+      },
+      required: ['document', 'verdict', 'departments', 'questions', 'blockers', 'summary'],
+      additionalProperties: false,
+    }
+    const result = await runClaudeFor({
+      executable,
+      prompt,
+      cwd: dir,
+      schema,
+      permissionMode: 'plan',
+      timeoutMs: 180_000,
+      proxy: proxyInfo(),
+      label: 'devdoc',
+    })
+    const data = result.data || {}
+    if (!text(data.document).trim()) {
+      throw userError('Claude 没有返回完整开发文档', '请重试；若持续出现，换一个模型或检查 CLI。', 502)
+    }
+    const remaining = [...new Set((String(data.document).match(/\{\{[^}]+\}\}/g) || []).slice(0, 20))]
+    if (remaining.length > 0) {
+      throw userError('Claude 返回的文档仍有未填写项', remaining.join('、'), 422)
+    }
+    const doc = normalizeDevDoc(data, {
+      projectDir: dir,
+      title: title || projectName,
+      content: text(data.document).trim(),
+      claudeSessionId: result.claudeSessionId,
+    })
+    await writeDevDoc(dir, doc)
+    return doc
+  }
+
+  async function saveDevDocDraft({ projectDir, title, content }) {
+    const dir = expand(projectDir)
+    if (!dir || !isDir(dir)) throw userError('项目目录不存在', '请先选择已存在的项目目录。', 400)
+    const source = text(content)
+    const previous = await readDevDoc(dir)
+    const hash = devDocHash(source)
+    const same = previous && previous.contentHash === hash
+    const doc = {
+      ...(previous && typeof previous === 'object' ? previous : {}),
+      projectDir: dir,
+      title: text(title).trim() || (previous && previous.title) || path.basename(dir),
+      content: source,
+      status: same && previous.status === 'approved' ? 'approved' : 'draft',
+      verdict: same && previous.status === 'approved' ? previous.verdict : '',
+      departments: same && previous.status === 'approved' ? previous.departments : [],
+      questions: same && previous.status === 'approved' ? previous.questions : [],
+      blockers: same && previous.status === 'approved' ? previous.blockers : [],
+      summary: same && previous.status === 'approved' ? previous.summary : '',
+      contentHash: hash,
+      approvedHash: same && previous.status === 'approved' ? previous.approvedHash : '',
+      claudeSessionId: same ? previous.claudeSessionId || '' : '',
+      updatedAt: Date.now(),
+    }
+    await writeDevDoc(dir, doc)
+    return doc
+  }
+
+  async function sendDevDoc({ projectDir, sessionId }) {
+    const dir = expand(projectDir)
+    if (!dir || !isDir(dir)) throw userError('项目目录不存在', '请先选择已存在的项目目录。', 400)
+    const doc = await readDevDoc(dir)
+    if (!doc || !text(doc.content).trim()) {
+      throw userError('还没有开发文档', '请先导入并让 Claude 完成审批。', 400)
+    }
+    if (
+      doc.status !== 'approved' ||
+      !doc.approvedHash ||
+      doc.approvedHash !== doc.contentHash ||
+      doc.contentHash !== devDocHash(doc.content)
+    ) {
+      throw userError('开发文档尚未通过部门审批', '请先让 Claude 完成硬审批；修改文档后必须重新审批。', 409)
+    }
+    const brief = [
+      '[开发文档已批准]',
+      `项目：${doc.title || path.basename(dir)}`,
+      `审批结论：${doc.verdict}`,
+      doc.summary ? `审批摘要：${doc.summary}` : '',
+      '',
+      '以下文档已通过国企多部门硬审批，请把它作为本会话的任务书执行；不要修改审批结论。',
+      '',
+      '<document>',
+      doc.content,
+      '</document>',
+    ]
+      .filter(Boolean)
+      .join('\n')
+
+    if (sessionId) {
+      if (!ACCEPTANCE_ID.test(sessionId)) throw userError('会话 ID 无效', '', 400)
+      const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(60_000))
+      const cwd = inspected.meta && inspected.meta.cwd
+      if (!cwd || projectKey(cwd) !== projectKey(dir)) {
+        throw userError('目标会话不属于当前项目', '请选择同一项目目录下的会话。', 400)
+      }
+      reviewPrompt.arm(sessionId, { workspace: dir, title: doc.title, source: 'devdoc' })
+      try {
+        await ctx.sessionController.prompt(
+          {
+            sessionId,
+            requestId: randomUUID(),
+            mode: 'queue',
+            content: [{ type: 'text', text: brief }],
+            clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          },
+          AbortSignal.timeout(60_000),
+        )
+      } catch (error) {
+        reviewPrompt.disarm(sessionId)
+        throw error
+      }
+      await writeContentRecord({
+        kind: 'devdoc',
+        title: doc.title,
+        sessionId,
+        projectDir: dir,
+        claudeSessionId: doc.claudeSessionId || (await currentClaudeSessionId(dir)),
+        content: doc.content,
+      })
+      return { sessionId, existing: true, projectDir: dir }
+    }
+
+    const dispatched = await dispatch({
+      projectDir: dir,
+      title: doc.title,
+      brief,
+      engine: 'cli',
+    })
+    await writeContentRecord({
+      kind: 'devdoc',
+      title: doc.title,
+      sessionId: dispatched.sessionId,
+      projectDir: dir,
+      claudeSessionId: doc.claudeSessionId || (await currentClaudeSessionId(dir)),
+      content: doc.content,
+    })
+    return {
+      sessionId: dispatched.sessionId,
+      workspaceId: dispatched.workspaceId,
+      workspaceTitle: dispatched.workspaceTitle,
+      permission: dispatched.permission,
+      permissionWarning: dispatched.permissionWarning,
+      existing: false,
+      projectDir: dir,
+    }
   }
 
   const reviewPrompt = attachReviewPrompt({
@@ -2654,6 +3115,69 @@ export function apply(ctx, config = {}) {
       path: '/usage',
       methods: ['GET'],
       handler: endpoint(async () => json(await usageSnapshot(acceptanceSettings.dailyBudgetUsd))),
+    },
+    {
+      path: '/devdoc',
+      methods: ['GET', 'POST'],
+      handler: endpoint(async (request) => {
+        if (request.method === 'GET') {
+          const projectDir = expand(new URL(request.url).searchParams.get('projectDir') || '')
+          const doc = projectDir ? await readDevDoc(projectDir) : null
+          return json({
+            projectDir,
+            doc,
+            unresolved: doc ? (String(doc.content).match(/\{\{[^}]+\}\}/g) || []).length : 0,
+          })
+        }
+        const body = await readBody(request)
+        const doc = await saveDevDocDraft(body)
+        return json({ doc })
+      }),
+    },
+    {
+      path: '/devdoc/template',
+      methods: ['GET'],
+      handler: endpoint(async (request) => {
+        const url = new URL(request.url)
+        const projectDir = expand(url.searchParams.get('projectDir') || '')
+        const projectName = url.searchParams.get('projectName') || (projectDir ? path.basename(projectDir) : '')
+        const content = devDocTemplate({
+          projectName,
+          projectDir,
+          goal: url.searchParams.get('goal') || '',
+        })
+        return json({
+          filename: `${text(projectName).trim() || '项目'}-开发文档模板.md`,
+          content,
+        })
+      }),
+    },
+    {
+      path: '/devdoc/refine',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        const saved = await saveDevDocDraft(body)
+        const doc = await refineDevDoc({
+          projectDir: saved.projectDir,
+          projectName: body.projectName,
+          title: saved.title,
+          content: saved.content,
+        })
+        return json({ doc })
+      }),
+    },
+    {
+      path: '/devdoc/send',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        const result = await sendDevDoc({
+          projectDir: body.projectDir,
+          sessionId: text(body.sessionId).trim(),
+        })
+        return json(result)
+      }),
     },
     {
       path: '/reviews',
