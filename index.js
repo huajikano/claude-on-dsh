@@ -20,7 +20,8 @@ import path from 'node:path'
 import { attachAcceptance } from './lib/acceptance/host.js'
 import { attachReviewPrompt } from './lib/acceptance/review.js'
 import { executeAcceptance } from './lib/acceptance/kernel.js'
-import { extractTask, buildFacts } from './lib/acceptance/facts.js'
+import { extractTask, buildFacts, recentConversation } from './lib/acceptance/facts.js'
+import { createJobs } from './lib/jobs.js'
 
 /** Loader row name. */
 export const name = 'claude-on-dsh'
@@ -551,14 +552,16 @@ function startClaudeRun({ executable, prompt, cwd, schema, systemPrompt, permiss
     child.stdin.on('error', () => {})
     child.stdin.end(prompt, 'utf8')
   })
+  function cancel() {
+    if (cancelled || timedOut) return
+    cancelled = true
+    try {
+      child.kill('SIGKILL')
+    } catch {}
+  }
   return {
     promise,
-    cancel() {
-      cancelled = true
-      try {
-        child.kill('SIGKILL')
-      } catch {}
-    },
+    cancel,
   }
 }
 
@@ -642,18 +645,18 @@ function buildDesktopPrompt({ projectName, projectDir, goal }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* development document (software review board, not government departments) */
+/* development document (concise software review board)                 */
 /* ------------------------------------------------------------------ */
 
 const DEV_DOC_ROLES = [
   ['user', '用户 / 发起人', '是否解决真实问题，目标是否偏离', 'mandatory'],
   ['product', '产品负责人', '范围、优先级、价值是否成立', 'mandatory'],
   ['tech', '技术负责人', '技术可行性、架构、依赖是否成立', 'mandatory'],
+  ['design', '设计 / 交互', '界面布局、交互流程、可用性、视觉一致性', 'mandatory'],
   ['dev', '开发负责人', '实现路径、工作量、集成风险是否可控', 'mandatory'],
   ['qa', '测试 / 质量', '验收标准是否可测试、证据是否充分', 'mandatory'],
   ['security', '安全与合规', '登录、权限、客户数据、支付、隐私、许可证', 'conditional'],
   ['ops', '运维 / 交付', '部署、上线、监控、备份、回滚', 'conditional'],
-  ['finance', '采购 / 财务', '外部采购、付费服务、预算审批', 'conditional'],
 ]
 const DEV_DOC_MANDATORY = DEV_DOC_ROLES.filter(([, , , kind]) => kind === 'mandatory').map(
   ([id]) => id,
@@ -661,6 +664,20 @@ const DEV_DOC_MANDATORY = DEV_DOC_ROLES.filter(([, , , kind]) => kind === 'manda
 const DEV_DOC_CONDITIONAL = DEV_DOC_ROLES.filter(([, , , kind]) => kind === 'conditional').map(
   ([id]) => id,
 )
+
+/* Template field labels that count as UNFILLED even when the user typed
+ * around them. Anything else inside `{{ }}` is treated as user content. */
+const DEV_DOC_FIELD_LABELS = [
+  '需求描述',
+  '需要开发的功能',
+  '已有技术代码资源',
+]
+
+function isTemplateFieldLabel(value) {
+  const normalized = String(value || '').replace(/\s+/g, '')
+  if (!normalized) return true
+  return DEV_DOC_FIELD_LABELS.some((label) => normalized.includes(label))
+}
 
 function devDocTemplate({ projectName, projectDir, goal } = {}) {
   const name = text(projectName).trim() || '（可选，默认用目录名）'
@@ -677,10 +694,9 @@ function devDocTemplate({ projectName, projectDir, goal } = {}) {
     '## 使用说明（固定，请保留）',
     '',
     '1. 你只填写 **第一部分** 的 7 个小节；第 2、3、4 节必填，其余可以留空。',
-    '2. 第二部分、第三部分、第四部分由 Claude 预审补全；不要手写部门审批表。',
-    '3. 这是软件项目评审，不照搬国企部门；只启用与项目真正相关的角色。',
-    '4. 任一必审角色驳回或需补充，整体不能通过，不能交给 DSH。',
-    '5. 修改已批准文档后审批自动失效，必须重新预审。',
+    '2. 第二、三、四部分由 Claude 预审补全；不要手写审批表。',
+    '3. 任一必审角色驳回或需补充，整体不能通过，不能交给 DSH。',
+    '4. 修改已批准文档后审批自动失效，必须重新预审。',
     '',
     '## 一、用户需求简报（只填这里）',
     '',
@@ -744,46 +760,31 @@ function devDocTemplate({ projectName, projectDir, goal } = {}) {
     '',
     '## 三、角色审批（Claude 预审填写，固定规则）',
     '',
-    '### 3.1 必审角色',
-    '',
     '| 角色 | 审什么 | 结论 | 意见 |',
     '|---|---|---|---|',
-    ...mandatory.map(([, role, duty]) => `| ${role} | ${duty} | 待审 | |`),
-    '',
-    '### 3.2 条件角色（只有项目涉及时才启用）',
-    '',
-    '| 角色 | 何时启用 | 结论 | 意见 |',
-    '|---|---|---|---|',
-    ...conditional.map(([, role, duty]) => `| ${role} | ${duty} | 不适用 / 待审 | |`),
+    ...DEV_DOC_ROLES.map(
+      ([, role, duty, kind]) =>
+        `| ${role}${kind === 'conditional' ? '（按需启用）' : ''} | ${duty} | 待审 | |`,
+    ),
     '',
     '> **固定审批规则**',
-    '> 1. 任一必审角色“驳回”或“需补充”，整体不得通过。',
-    '> 2. 条件角色只有两种合法状态：`不适用`，或 `批准`；启用后驳回同样阻断。',
-    '> 3. 大方向、重大范围、关键技术路线、安全边界、外部支出，任一项没讲清楚，直接驳回。',
-    '> 4. “有条件同意”按未批准处理；“以后补”不是放行理由。',
-    '> 5. 修改已批准文档后，审批自动失效，必须重新预审。',
+    '> 1. 必审角色：用户/发起人、产品、技术、设计、开发、测试；任一“驳回”或“需补充”，整体不得通过。',
+    '> 2. 无界面的项目，设计 / 交互确认“无界面”后放行；有界面则审布局、交互、可用性、视觉一致性。',
+    '> 3. 安全与合规、运维 / 交付只在项目涉及时启用；不涉及填 `不适用`，启用后驳回同样阻断。',
+    '> 4. 大方向、重大范围、关键技术路线、安全边界，任一项没讲清楚，直接驳回。',
+    '> 5. “以后补”不是放行理由。',
+    '> 6. 修改已批准文档后，审批自动失效，必须重新预审。',
     '',
-    '### 3.3 审批结论',
+    '### 审批结论',
     '【Claude 预审填写】',
     '',
     '- 结论：`APPROVED / REJECTED / NEEDS_INFO`',
     '- 阻塞项：',
     '- 需补充材料：',
     '',
-    '## 四、交给 DSH 的任务摘要（Claude 生成）',
+    '## 四、Claude 预审指令（固定，请保留）',
     '',
-    '【Claude 预审填写】',
-    '',
-    '- 目标：',
-    '- 必做功能：',
-    '- 技术约束：',
-    '- 验收方式：',
-    '- 明确不做：',
-    '- 交付物：',
-    '',
-    '## 五、Claude 预审指令（固定，请保留）',
-    '',
-    '你是软件项目的预审组，不是政府机关。只保留与软件开发真正相关的角色：用户/发起人、产品、技术、开发、测试；安全、运维、采购/财务仅在项目确实涉及时启用。',
+    '你是软件项目的预审组。必审角色：用户/发起人、产品、技术、设计、开发、测试；安全、运维仅在项目确实涉及时启用。',
     '',
     '- 只依据用户简报、项目目录和参考资料，不臆造事实。',
     '- 用户没写的细节，先列入“待确认问题”，不要替用户做重大决定。',
@@ -890,79 +891,6 @@ function normalizeDevDoc(result, { projectDir, title, content, claudeSessionId }
 /* ------------------------------------------------------------------ */
 /* job manager                                                         */
 /* ------------------------------------------------------------------ */
-
-function createJobs() {
-  const jobs = new Map()
-
-  function prune() {
-    if (jobs.size <= JOB_KEEP) return
-    const finished = [...jobs.values()]
-      .filter((job) => job.state !== 'running')
-      .sort((left, right) => left.startedAt - right.startedAt)
-    while (jobs.size > JOB_KEEP && finished.length > 0) {
-      const victim = finished.shift()
-      jobs.delete(victim.id)
-    }
-  }
-
-  function serialize(job) {
-    return {
-      id: job.id,
-      kind: job.kind,
-      state: job.state,
-      phase: job.phase,
-      startedAt: job.startedAt,
-      finishedAt: job.finishedAt,
-      result: job.result,
-      meta: job.meta,
-      error: job.error,
-      hint: job.hint,
-    }
-  }
-
-  function start(kind, begin) {
-    const id = randomUUID()
-    const output = begin()
-    const promise =
-      output && typeof output.then === 'function' ? output : output && output.promise
-    const cancel =
-      output && typeof output.cancel === 'function' ? output.cancel : undefined
-    const job = {
-      id,
-      kind,
-      state: 'running',
-      phase: kind === 'brief' ? 'Claude 正在理解需求' : 'Claude 正在定稿交接书',
-      startedAt: Date.now(),
-      cancel,
-    }
-    jobs.set(id, job)
-    promise.then(
-      ({ data, meta }) => {
-        Object.assign(job, {
-          state: 'done',
-          phase: '完成',
-          result: data,
-          meta,
-          finishedAt: Date.now(),
-        })
-        prune()
-      },
-      (error) => {
-        Object.assign(job, {
-          state: error && error.status === 409 ? 'cancelled' : 'error',
-          phase: '结束',
-          error: messageOf(error),
-          hint: text(error && error.hint),
-          finishedAt: Date.now(),
-        })
-        prune()
-      },
-    )
-    return job
-  }
-
-  return { jobs, start, serialize }
-}
 
 /* ------------------------------------------------------------------ */
 /* history                                                             */
@@ -1346,7 +1274,7 @@ export function apply(ctx, config = {}) {
   const cliCache = { path: '', version: '', checkedAt: 0, error: '' }
   const detectCache = { at: 0, value: null }
   const staticCache = { at: 0, value: null }
-  const { jobs, start, serialize } = createJobs()
+  const { jobs, start, serialize, list: listJobs, cancel: cancelJob, retry: retryJob } = createJobs({ file: path.join(dshHome(), 'claude-on-dsh', 'jobs.json') })
 
   const proxyInfo = () => {
     const claudeSettings = readClaudeSettings()
@@ -1401,7 +1329,7 @@ export function apply(ctx, config = {}) {
     return snapshot.over
   }
 
-  async function runClaudeFor({ cwd, label, ...options }) {
+  async function runClaudeFor({ cwd, label, onCancel, ...options }) {
     try {
       const trust = await ensureClaudeTrust(cwd)
       if (trust.error) {
@@ -1416,6 +1344,7 @@ export function apply(ctx, config = {}) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const run = startClaudeRun({ ...options, cwd, resume })
+        if (typeof onCancel === 'function') onCancel(run.cancel)
         const result = await run.promise
         const sessionId = (result.meta && result.meta.sessionId) || resume
         try {
@@ -1451,7 +1380,7 @@ export function apply(ctx, config = {}) {
     throw userError('Claude 会话恢复失败', '请重试。', 502)
   }
 
-  const judgeRunner = async ({ prompt, schema, systemPrompt, cwd, timeoutMs }) => {
+  const judgeRunner = async ({ prompt, schema, systemPrompt, cwd, timeoutMs, onCancel }) => {
     const executable = findCli(settings.claudeCliPath)
     if (!executable) {
       throw userError('没有找到 Claude Code CLI，无法进行验收判定', '请先确认 CLI 可用。', 500)
@@ -1467,6 +1396,7 @@ export function apply(ctx, config = {}) {
       timeoutMs,
       proxy: proxyInfo(),
       label: 'acceptance',
+      onCancel,
     })
   }
 
@@ -1494,7 +1424,7 @@ export function apply(ctx, config = {}) {
 
   if (legacyGate) acceptance.setAuto(acceptanceSettings.autoAcceptance)
 
-  async function runManualAcceptance(sessionId, opinion = '') {
+  async function runManualAcceptance(sessionId, opinion = '', onCancel) {
     const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(60_000))
     const workspace = inspected.meta && inspected.meta.cwd
     if (!workspace) throw userError('会话缺少 workspace，无法验收', '', 400)
@@ -1507,7 +1437,7 @@ export function apply(ctx, config = {}) {
       events: inspected.events,
       workspace,
       gatePolicy: 'manual',
-      runJudge: judgeRunner,
+      runJudge: async (params) => judgeRunner({ ...params, onCancel }),
       options: { ...acceptanceOptions, opinion },
       logger: (line) => {
         try {
@@ -1549,51 +1479,12 @@ export function apply(ctx, config = {}) {
 
   const ACCEPTANCE_ID = /^session-[A-Za-z0-9-]+$/
 
-  function recentConversation(events, limit = 8) {
-    const lines = []
-    for (const event of events) {
-      if (event.type !== 'user/message' && event.type !== 'assistant/message') continue
-      const data = event.data || {}
-      if (data.source && data.source.kind && data.source.kind !== 'user' && data.source.kind !== 'claude-on-dsh') {
-        continue
-      }
-      const parts = Array.isArray(data.content) ? data.content : []
-      const text = parts
-        .filter((part) => part && part.type === 'text')
-        .map((part) => part.text)
-        .join('\n')
-        .trim()
-      if (!text) continue
-      lines.push(`${event.type === 'user/message' ? '用户' : 'DSH'}：${text.slice(0, 700)}`)
-    }
-    return lines.slice(-limit).join('\n---\n')
-  }
-
-  function lastAssistantText(events) {
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-      const event = events[index]
-      if (!event || event.type !== 'assistant/message') continue
-      const data = event.data || {}
-      const blocks = Array.isArray(data.content)
-        ? data.content
-        : Array.isArray(data.message && data.message.content)
-          ? data.message.content
-          : []
-      const text = blocks
-        .filter((part) => part && part.type === 'text')
-        .map((part) => part.text)
-        .join('\n')
-        .trim()
-      if (text) return text
-    }
-    return ''
-  }
-
-  async function runReview({ sessionId, meta, events, workspace, custom }) {
+  async function runReview({ sessionId, meta, events, workspace, custom, activeGoal = '' }) {
     const facts = await buildFacts({ sessionId, meta, events, workspace })
     const context = [
       `项目目录：${workspace}`,
       `任务全文：${facts.task.summary || '未识别'}`,
+      `本次新增要求：${activeGoal || '无（按原始任务目标验收）'}`,
       `最近对话：\n${recentConversation(events, 12) || '无'}`,
       `改动文件：${facts.changedFiles.slice(0, 30).map((file) => file.path).join(', ') || '无'}`,
       `测试/验证命令：${
@@ -1613,7 +1504,9 @@ export function apply(ctx, config = {}) {
           ? String(facts.git.status || '').slice(0, 1500)
           : '不可用'
       }`,
+      `本次新增要求：${activeGoal || '无（按原始任务目标验收）'}`,
       `用户验收要求：${custom || '无'}`,
+      `任务标准编号：${(Array.isArray(facts.criteria) ? facts.criteria : []).map((criterion) => `${criterion.id}=${criterion.text}`).join('；') || '未找到任务书验收标准'}`,
     ].join('\n\n')
     const prompt = [
       '你是独立验收者。请阅读项目与这次 DSH 会话的真实测试记录，给出验收意见。',
@@ -1647,8 +1540,8 @@ export function apply(ctx, config = {}) {
       cwd: workspace,
       schema,
       permissionMode: 'plan',
-      model: 'haiku',
-      timeoutMs: 120_000,
+      model: settings.model,
+      timeoutMs: Math.max(settings.timeoutMs, 300_000),
       proxy: proxyInfo(),
       label: 'review',
     })
@@ -1676,11 +1569,18 @@ export function apply(ctx, config = {}) {
     return { ...data, claudeSessionId: result.claudeSessionId || '', messageId }
   }
 
-  async function refineDevDoc({ projectDir, projectName, title, content }) {
+  async function refineDevDoc({ projectDir, projectName, title, content }, onCancel) {
     const dir = expand(projectDir)
     if (!dir || !isDir(dir)) throw userError('项目目录不存在', '请先选择已存在的项目目录。', 400)
-    const source = text(content).trim()
-    if (!source) throw userError('开发文档为空', '请先导出模板、填写后导入。', 400)
+    const raw = text(content).trim()
+    if (!raw) throw userError('开发文档为空', '请先导出模板、填写后导入。', 400)
+    // Users often type their answer INSIDE the braces: `{{我想要做一个apk…}}`.
+    // That counts as filled: keep the text, drop the braces. A placeholder is
+    // only "unresolved" when it still holds a template field label.
+    const source = raw.replace(/\{\{\s*([^{}]{0,80}?)\s*\}\}/g, (_, inner) => {
+      const value = String(inner).trim()
+      return isTemplateFieldLabel(value) ? `{{${value}}}` : value
+    })
     const unresolved = [...new Set((source.match(/\{\{[^}]+\}\}/g) || []).slice(0, 20))]
     if (unresolved.length > 0) {
       throw userError(
@@ -1692,8 +1592,7 @@ export function apply(ctx, config = {}) {
     const executable = findCli(settings.claudeCliPath)
     if (!executable) throw userError('没有找到 Claude Code CLI，无法预审开发文档', '', 500)
     const prompt = [
-      '你是软件项目的预审组，不是政府机关，也不要照搬国企部门。',
-      '只保留与软件开发真正相关的角色，并按项目是否涉及启用条件角色。',
+      '你是软件项目的预审组。必审角色：用户/发起人、产品、技术、设计、开发、测试；安全、运维仅在项目确实涉及时启用。',
       '',
       `项目名称：${text(projectName).trim() || path.basename(dir)}`,
       `项目目录：${dir}`,
@@ -1706,8 +1605,8 @@ export function apply(ctx, config = {}) {
       '审批规则：',
       '- 只依据下方文档和项目目录事实；缺失信息列入 questions，不得臆造。',
       '- 必审角色 decision 只能是 approve / reject / needs_info；任一不是 approve，整体不得 approved。',
-      '- 条件角色只有在确实涉及时才启用；不涉及时 decision 用 not_applicable，涉及时按必审处理。',
-      '- “有条件同意”按未批准处理；大方向、重大范围、关键技术路线、安全边界、外部支出未说清，直接驳回。',
+      '- 安全与运维角色只有在确实涉及时才启用；不涉及时 decision 用 not_applicable，涉及时按必审处理。',
+      '- “有条件同意”按未批准处理；大方向、重大范围、关键技术路线、安全边界未说清，直接驳回。',
       '- blockers 写明不能放行的具体原因；questions 写明需要用户补充的材料。',
       '- document 返回完整 Markdown 文档，保留固定章节、角色审批表和审批规则，补全第二、三、四部分。',
       '- 不要输出 Markdown 代码围栏，只输出 JSON。',
@@ -1753,15 +1652,20 @@ export function apply(ctx, config = {}) {
       cwd: dir,
       schema,
       permissionMode: 'plan',
-      timeoutMs: 180_000,
+      // The review reads the whole project and writes a long document; a deep
+      // CLI session (resume + plan mode) regularly needs several minutes, and
+      // killing it mid-run only wastes the tokens already spent.
+      timeoutMs: Math.max(settings.timeoutMs, 600_000),
       proxy: proxyInfo(),
       label: 'devdoc',
+      onCancel,
     })
     const data = result.data || {}
     if (!text(data.document).trim()) {
       throw userError('Claude 没有返回完整开发文档', '请重试；若持续出现，换一个模型或检查 CLI。', 502)
     }
     const remaining = [...new Set((String(data.document).match(/\{\{[^}]+\}\}/g) || []).slice(0, 20))]
+      .filter((placeholder) => isTemplateFieldLabel(placeholder.slice(2, -2)))
     if (remaining.length > 0) {
       throw userError('Claude 返回的文档仍有未填写项', remaining.join('、'), 422)
     }
@@ -1823,7 +1727,7 @@ export function apply(ctx, config = {}) {
       `审批结论：${doc.verdict}`,
       doc.summary ? `审批摘要：${doc.summary}` : '',
       '',
-      '以下文档已通过国企多部门硬审批，请把它作为本会话的任务书执行；不要修改审批结论。',
+      '以下文档已通过开发文档评审，请把它作为本会话的任务书执行；不要修改审批结论。',
       '',
       '<document>',
       doc.content,
@@ -1905,7 +1809,7 @@ export function apply(ctx, config = {}) {
     },
   })
 
-  async function runFirstQuestion(sessionId, requirement) {
+  async function runFirstQuestion(sessionId, requirement, onCancel) {
     const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(60_000))
     const workspace = inspected.meta && inspected.meta.cwd
     if (!workspace) throw userError('会话缺少 workspace，无法读取项目', '', 400)
@@ -1925,6 +1829,7 @@ export function apply(ctx, config = {}) {
     const context = [
       `任务全文：${facts.task.summary || '未识别'}`,
       `最近对话：\n${recentConversation(inspected.events, 8) || '无'}`,
+      `本次新要求：${requirement}`,
       `改动文件：${facts.changedFiles.slice(0, 20).map((file) => file.path).join(', ') || '无'}`,
       `最近验证命令：${
         facts.commands
@@ -1980,10 +1885,11 @@ export function apply(ctx, config = {}) {
           cwd: workspace,
           schema,
           permissionMode: 'plan',
-          model: 'haiku',
-          timeoutMs: 120_000,
+          model: settings.model,
+          timeoutMs: Math.max(settings.timeoutMs, 300_000),
           proxy: proxyInfo(),
           label: 'first-question',
+          onCancel,
         })
         understanding = text(result.data.understanding).trim()
         question = text(result.data.question).trim()
@@ -2042,7 +1948,7 @@ export function apply(ctx, config = {}) {
     } catch (error) {
       ctx.logger?.warn?.(`[claude-on-dsh] 无法写入首问记录：${messageOf(error)}`)
     }
-    return json({
+    return {
       sessionId,
       understanding,
       question,
@@ -2051,7 +1957,7 @@ export function apply(ctx, config = {}) {
       draft,
       claudeSessionId,
       sent: false,
-    })
+    }
   }
 
   function firstQuestionMessage({ requirement, question, answer, brief }) {
@@ -2323,7 +2229,97 @@ export function apply(ctx, config = {}) {
     return value
   }
 
-  function beginClaude(kind, payload) {
+  async function buildAcceptanceDispatch(body, onCancel) {
+    const dir = expand(body.projectDir)
+    if (!dir) throw userError('缺少项目目录', '交给 DSH 验收需要一个项目目录。', 400)
+    if (!isDir(dir)) throw userError(`项目目录不存在：${dir}`, '请先创建或选择目录。', 400)
+    let sessionId = text(body.sessionId).trim()
+    if (!sessionId) {
+      const history = await readHistory()
+      const entry = history.find((item) => item.projectDir === dir && item.sessionId)
+      if (!entry) throw userError('找不到该项目首问创建的 DSH 会话', '验收必须回到原会话。', 400)
+      sessionId = entry.sessionId
+    }
+    let goal = text(body.goal).trim()
+    try {
+      const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(20_000))
+      const task = extractTask(inspected.events)
+      if (task.summary) goal = task.summary
+    } catch {}
+    const opinion = text(body.opinion).trim()
+    if (opinion) goal = `${goal}${goal ? '\n\n' : ''}用户验收意见：${opinion}`
+    const titleBase = path.basename(dir)
+    const reportPath = path.join(dir, '.dsh', 'acceptance', 'dsh-验收.md')
+    const executable = findCli(settings.claudeCliPath)
+    const schema = {
+      type: 'object',
+      properties: { title: { type: 'string' }, brief: { type: 'string' } },
+      required: ['title', 'brief'],
+      additionalProperties: false,
+    }
+    const prompt = [
+      '你是验收指挥。请为下面的项目写一份交给 DSH 执行代理的验收任务书。',
+      `项目目录：${dir}`,
+      `任务背景：${goal || '未提供，请按项目现状验收'}`,
+      '要求 DSH：实际读取项目与 git 状态；运行可用的构建/测试/lint 并记录真实输出；',
+      '逐项给出 pass / fail / uncertain 与证据；无法验证的项标 uncertain，禁止猜 pass；',
+      `把报告写入 ${reportPath}，并在会话中给出结论。`,
+      'brief 必须自包含、可直接执行，不要依赖追问；输出 JSON { title, brief }。',
+    ].join('\n')
+    let brief = ''
+    let title = ''
+    if (executable) {
+      const result = await runClaudeFor({
+        executable,
+        prompt,
+        cwd: dir,
+        schema,
+        permissionMode: 'plan',
+        model: settings.model,
+        timeoutMs: Math.max(settings.timeoutMs, 300_000),
+        proxy: proxyInfo(),
+        label: 'acceptance-brief',
+        onCancel,
+      })
+      brief = text(result.data.brief).trim()
+      title = text(result.data.title).trim()
+    }
+    if (!brief) {
+      title = `验收：${titleBase}`
+      brief = [
+        `请对项目做独立验收：${dir}`,
+        '',
+        `任务背景：${goal || '未提供，请按项目现状判断'}`,
+        '',
+        '要求：',
+        '1. 读取项目与 git 状态，列出实际改动文件；',
+        '2. 运行可用的构建/测试/lint，记录真实命令、输出与退出码；',
+        '3. 逐项给出 pass / fail / uncertain 与证据；无法验证的项标 uncertain，禁止猜 pass；',
+        `4. 把验收报告写入 ${reportPath}，并在会话中给出结论与关键证据。`,
+      ].join('\n')
+    }
+    return { sessionId, workspaceTitle: path.basename(dir), title, brief, reportPath, sent: false }
+  }
+
+  function beginClaude(kind, payload, { setCancel } = {}) {
+    if (kind === 'first-question') {
+      const sessionId = text(payload.sessionId).trim()
+      const requirement = text(payload.requirement).trim()
+      if (!sessionId || !requirement) throw userError('请选择会话并填写新要求')
+      return { promise: runFirstQuestion(sessionId, requirement, setCancel) }
+    }
+    if (kind === 'acceptance') {
+      const sessionId = text(payload.sessionId).trim()
+      if (!sessionId) throw userError('缺少会话 id')
+      return { promise: runManualAcceptance(sessionId, text(payload.opinion).trim(), setCancel) }
+    }
+    if (kind === 'acceptance-brief') {
+      return { promise: buildAcceptanceDispatch(payload, setCancel) }
+    }
+    if (kind === 'devdoc') {
+      return { promise: refineDevDoc(payload, setCancel) }
+    }
+
     const exe = findCli(settings.claudeCliPath)
     if (!exe) {
       throw userError(
@@ -2348,9 +2344,6 @@ export function apply(ctx, config = {}) {
 
     const projectDir = expand(payload.projectDir)
     const cwd = isDir(projectDir) ? projectDir : os.tmpdir()
-    // The panel only offers the three read-ish modes. Never let a request body
-    // smuggle in bypassPermissions/auto; an operator can still opt into those
-    // through the plugin config, which this falls back to.
     const permissionMode = planningPermissionMode(payload.permissionMode, settings.permissionMode)
     const proxy = proxyInfo()
     if (kind === 'brief') {
@@ -2367,10 +2360,11 @@ export function apply(ctx, config = {}) {
         schema: BRIEF_SCHEMA,
         systemPrompt: COMMANDER_SYSTEM,
         permissionMode,
-        model: '',
+        model: settings.model,
         timeoutMs: settings.timeoutMs,
         proxy,
         label: 'plan',
+        onCancel: setCancel,
       })
     }
 
@@ -2390,10 +2384,11 @@ export function apply(ctx, config = {}) {
       schema: REFINE_SCHEMA,
       systemPrompt: COMMANDER_SYSTEM,
       permissionMode,
-      model: '',
+      model: settings.model,
       timeoutMs: settings.timeoutMs,
       proxy,
       label: 'refine',
+      onCancel: setCancel,
     })
   }
 
@@ -2716,27 +2711,62 @@ export function apply(ctx, config = {}) {
       methods: ['GET', 'POST'],
       handler: endpoint(async (request) => {
         if (request.method === 'GET') {
-          const id = new URL(request.url).searchParams.get('id') ?? ''
+          const url = new URL(request.url)
+          const id = url.searchParams.get('id') ?? ''
+          if (!id) return json({ jobs: listJobs() })
           const job = jobs.get(id)
           if (!job) throw userError('任务不存在或已被清理', '', 404)
           return json({ job: serialize(job) })
         }
         const body = await readBody(request)
         const kind = text(body.kind)
-        if (kind !== 'brief' && kind !== 'refine') throw userError('未知的任务类型')
-        const job = start(kind, () => beginClaude(kind, body))
+        if (!['brief', 'refine', 'first-question', 'acceptance-brief', 'acceptance', 'devdoc'].includes(kind)) {
+          throw userError('未知的任务类型')
+        }
+      const job = start(kind, ({ setCancel, update, payload: savePayload }) => {
+        savePayload(body)
+        return beginClaude(kind, body, { setCancel, update })
+      }, {
+        ...body,
+        kind,
+        projectDir: body.projectDir || body.entry?.projectDir || '',
+        title: body.title || body.entry?.title || '',
+      })
         return json({ job: serialize(job) })
       }),
+    },
+    {
+      path: '/jobs/list',
+      methods: ['GET'],
+      handler: endpoint(async () => json({
+        jobs: listJobs().map((job) => {
+          const { result, meta, payload, ...summary } = job
+          return { ...summary, hasResult: Boolean(result) }
+        }),
+      })),
     },
     {
       path: '/jobs/cancel',
       methods: ['POST'],
       handler: endpoint(async (request) => {
         const body = await readBody(request)
-        const job = jobs.get(text(body.id))
-        if (!job) throw userError('任务不存在', '', 404)
-        job.cancel?.()
-        return json({ ok: true })
+        const result = cancelJob(text(body.id))
+        if (!result.ok) throw userError(result.reason === 'not-found' ? '任务不存在' : '任务已经结束', '', result.reason === 'not-found' ? 404 : 409)
+        return json({ ok: true, job: serialize(result.job) })
+      }),
+    },
+    {
+      path: '/jobs/retry',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        const result = retryJob(text(body.id), ({ setCancel, update }) => {
+          const previous = jobs.get(text(body.id))
+          if (!previous) throw userError('任务不存在', '', 404)
+          return beginClaude(previous.kind, previous.payload || {}, { setCancel, update })
+        })
+        if (!result.ok) throw userError(result.reason === 'not-found' ? '任务不存在' : '任务仍在运行', '', result.reason === 'not-found' ? 404 : 409)
+        return json({ job: serialize(result.job) })
       }),
     },
     {
@@ -2940,8 +2970,8 @@ export function apply(ctx, config = {}) {
               cwd: dir,
               schema,
               permissionMode: 'plan',
-              model: 'haiku',
-              timeoutMs: 120_000,
+              model: settings.model,
+              timeoutMs: Math.max(settings.timeoutMs, 300_000),
               proxy: proxyInfo(),
               label: 'acceptance-brief',
             })
@@ -3069,7 +3099,7 @@ export function apply(ctx, config = {}) {
         const requirement = text(body.requirement).trim()
         if (!sessionId) throw userError('请选择已有 DSH 对话')
         if (!requirement) throw userError('请填写新要求')
-        return runFirstQuestion(sessionId, requirement)
+        return json(await runFirstQuestion(sessionId, requirement))
       }),
     },
     {
@@ -3126,7 +3156,11 @@ export function apply(ctx, config = {}) {
           return json({
             projectDir,
             doc,
-            unresolved: doc ? (String(doc.content).match(/\{\{[^}]+\}\}/g) || []).length : 0,
+            unresolved: doc
+              ? (String(doc.content).match(/\{\{[^}]+\}\}/g) || []).filter(
+                  (placeholder) => isTemplateFieldLabel(placeholder.slice(2, -2)),
+                ).length
+              : 0,
           })
         }
         const body = await readBody(request)

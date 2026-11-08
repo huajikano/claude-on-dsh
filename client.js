@@ -125,6 +125,8 @@ window.__ModuleLoader__.load({
         devDocNeedProject: '请先在项目设定里选择项目目录。',
         devDocPlaceholder: '先导出开发文档模板，填写后导入；也可以直接粘贴 Markdown。',
         devDocReview: 'Claude 预审',
+        devDocAiReviewNotice: '以下为 Claude 的 AI 预审意见，不代表真人审批；请你确认后再交给 DSH。',
+        devDocConfirmDelivery: '我已审阅预审意见，确认交给 DSH',
         devDocSend: '交给 DSH',
         devDocTarget: '交付方式',
         devDocNewSession: '新建 DSH 会话',
@@ -195,6 +197,17 @@ window.__ModuleLoader__.load({
         acceptanceRework: '返工建议',
         acceptanceReport: '报告路径',
         acceptanceRecent: '最近验收',
+        workspaceModes: '工作区',
+        workspaceNew: '新建规划',
+        workspaceContinue: '继续会话',
+        jobOpen: '查看',
+        jobDetails: '详情',
+        sessionSearch: '搜索会话名称、目录或 ID…',
+        reworkDraft: '生成返工草稿',
+        reworkDraftHint: '返工内容先在此编辑，确认后才会发送到原 DSH 会话。',
+        criterionPass: '已验证',
+        criterionFail: '未通过',
+        criterionUnknown: '未验证',
         gatePolicy: '策略',
         dispatched: '已派发，DSH 开始执行',
         openSession: '打开会话',
@@ -357,6 +370,8 @@ window.__ModuleLoader__.load({
         devDocNeedProject: 'Select a project directory first.',
         devDocPlaceholder: 'Export the template, fill it in, then import; you can also paste Markdown directly.',
         devDocReview: 'Claude pre-review',
+        devDocAiReviewNotice: 'This is Claude’s AI pre-review, not human approval. Confirm it yourself before delivery to DSH.',
+        devDocConfirmDelivery: 'I reviewed the pre-review and confirm delivery to DSH',
         devDocSend: 'Hand to DSH',
         devDocTarget: 'Delivery',
         devDocNewSession: 'New DSH session',
@@ -427,6 +442,17 @@ window.__ModuleLoader__.load({
         acceptanceRework: 'Rework',
         acceptanceReport: 'Report path',
         acceptanceRecent: 'Recent assessments',
+        workspaceModes: 'Workspace',
+        workspaceNew: 'New plan',
+        workspaceContinue: 'Continue session',
+        jobOpen: 'Open',
+        jobDetails: 'Details',
+        sessionSearch: 'Search title, folder, or ID…',
+        reworkDraft: 'Draft rework request',
+        reworkDraftHint: 'Review and edit the rework draft; it is sent to the original DSH session only after confirmation.',
+        criterionPass: 'Verified',
+        criterionFail: 'Failed',
+        criterionUnknown: 'Unverified',
         gatePolicy: 'Policy',
         dispatched: 'Dispatched; DSH is executing',
         openSession: 'Open session',
@@ -970,7 +996,8 @@ window.__ModuleLoader__.load({
       const [form, setForm] = useState(() =>
         restored && restored.form ? { ...DEFAULT_FORM, ...restored.form } : DEFAULT_FORM,
       )
-      const [job, setJob] = useState(() => (restored ? restored.job ?? null : null))
+      const [job, setJob] = useState(null)
+      const [backgroundJobs, setBackgroundJobs] = useState([])
       const [brief, setBrief] = useState(() => (restored ? restored.brief ?? null : null))
       const [answer, setAnswer] = useState(() => (restored ? restored.answer ?? '' : ''))
       const [refined, setRefined] = useState(() => (restored ? restored.refined ?? null : null))
@@ -994,6 +1021,8 @@ window.__ModuleLoader__.load({
       const [dialog, setDialog] = useState(null)
       const [firstQuestion, setFirstQuestion] = useState(null)
       const [allSessions, setAllSessions] = useState([])
+      const [sessionSearch, setSessionSearch] = useState('')
+      const [activeWorkspace, setActiveWorkspace] = useState(() => (restored ? restored.activeWorkspace || 'new' : 'new'))
       const [recordsOpen, setRecordsOpen] = useState(false)
       const [recordItems, setRecordItems] = useState([])
       const [claudeSessions, setClaudeSessions] = useState([])
@@ -1007,6 +1036,9 @@ window.__ModuleLoader__.load({
       const [deletingKey, setDeletingKey] = useState('')
       const [recordSelected, setRecordSelected] = useState(null)
       const [reviewEntries, setReviewEntries] = useState([])
+      const [acceptanceEntries, setAcceptanceEntries] = useState([])
+      const [acceptanceSelected, setAcceptanceSelected] = useState(null)
+      const [reworkDraft, setReworkDraft] = useState('')
       const [reviewSelected, setReviewSelected] = useState(null)
       const [recordBusy, setRecordBusy] = useState(false)
       const [recordError, setRecordError] = useState('')
@@ -1017,6 +1049,7 @@ window.__ModuleLoader__.load({
       const [devDocError, setDevDocError] = useState('')
       const [devDocNotice, setDevDocNotice] = useState('')
       const [devDocSession, setDevDocSession] = useState('')
+      const [devDocConfirmed, setDevDocConfirmed] = useState(false)
       const [reviewSettings, setReviewSettings] = useState({
         autoPrompt: true,
         defaultAction: 'none',
@@ -1036,7 +1069,6 @@ window.__ModuleLoader__.load({
               v: 1,
               savedAt: Date.now(),
               form,
-              job,
               brief,
               answer,
               refined,
@@ -1046,10 +1078,11 @@ window.__ModuleLoader__.load({
               phase,
               dispatch,
               consumedJobId,
+              activeWorkspace,
             }),
           )
         } catch {}
-      }, [form, job, brief, answer, refined, promptText, desktopPrompt, desktopReply, phase, dispatch, consumedJobId])
+      }, [form, brief, answer, refined, promptText, desktopPrompt, desktopReply, phase, dispatch, consumedJobId, activeWorkspace])
 
       useEffect(() => {
         let stopped = false
@@ -1076,7 +1109,21 @@ window.__ModuleLoader__.load({
         }
       }, [])
 
-      /* Environment, history, and session status: load in parallel, then refresh. */
+      useEffect(() => {
+        let stopped = false
+        const loadJobs = async () => {
+          try {
+            const data = await request('/jobs/list')
+            if (stopped) return
+            const items = Array.isArray(data.jobs) ? data.jobs : []
+            setBackgroundJobs(items)
+          } catch {}
+        }
+        loadJobs()
+        const timer = setInterval(loadJobs, 5000)
+        return () => { stopped = true; clearInterval(timer) }
+      }, [])
+
       useEffect(() => {
         let stopped = false
         const load = async () => {
@@ -1144,12 +1191,11 @@ window.__ModuleLoader__.load({
             const data = await request(`/jobs?id=${encodeURIComponent(job.id)}`)
             if (stopped) return
             setJob(data.job)
+            setBackgroundJobs((current) => current.map((item) => item.id === data.job.id ? data.job : item))
             if (data.job.state === 'running') timer = setTimeout(tick, 1000)
-          } catch (error) {
+          } catch {
             if (stopped) return
-            setJob((current) =>
-              current ? { ...current, state: 'error', error: error.message, hint: error.hint } : current,
-            )
+            timer = setTimeout(tick, 2500)
           }
         }
         timer = setTimeout(tick, 800)
@@ -1158,6 +1204,58 @@ window.__ModuleLoader__.load({
           clearTimeout(timer)
         }
       }, [job && job.id, job && job.state])
+
+      async function startBackgroundJob(kind, payload) {
+        const response = await request('/jobs', { method: 'POST', body: JSON.stringify({ kind, ...payload }) })
+        setJob(response.job)
+        setBackgroundJobs((current) => [response.job, ...current.filter((item) => item.id !== response.job.id)])
+        return response.job
+      }
+
+      async function cancelBackgroundJob(id) {
+        try {
+          const response = await request('/jobs/cancel', { method: 'POST', body: JSON.stringify({ id }) })
+          if (response.job) {
+            setJob((current) => current?.id === id ? response.job : current)
+            setBackgroundJobs((current) => current.map((item) => item.id === id ? response.job : item))
+          }
+        } catch (error) { fail(error.message, error.hint) }
+      }
+
+      async function resumeBackgroundJob(item) {
+        if (!item) return
+        let detail = item
+        try {
+          const response = await request(`/jobs?id=${encodeURIComponent(item.id)}`)
+          if (response.job) detail = response.job
+        } catch {}
+        if (['error', 'interrupted', 'cancelled'].includes(detail.state)) {
+          try {
+            const response = await request('/jobs/retry', { method: 'POST', body: JSON.stringify({ id: detail.id }) })
+            setJob(response.job)
+            setBackgroundJobs((current) => [response.job, ...current.filter((entry) => entry.id !== response.job.id)])
+            return
+          } catch (error) { fail(error.message, error.hint); return }
+        }
+        if (detail.kind === 'first-question') {
+          setFirstQuestion({ entry: { sessionId: detail.payload?.sessionId || '', projectDir: detail.payload?.projectDir || '', title: detail.payload?.title || '' }, requirement: detail.payload?.requirement || '', busy: detail.state === 'running', error: detail.error || '', generated: detail.state === 'done' ? detail.result : null, answer: detail.payload?.answer || '', draft: detail.payload?.draft || '', draftTemplate: detail.payload?.draftTemplate || '', draftEdited: Boolean(detail.payload?.draftEdited), jobId: detail.id })
+          setActiveWorkspace('continue')
+        } else if (detail.kind === 'acceptance' || detail.kind === 'acceptance-brief') {
+          setDialog({ entry: detail.payload?.entry || { sessionId: detail.payload?.sessionId || '', projectDir: detail.payload?.projectDir || '', title: '' }, mode: detail.kind === 'acceptance' ? 'claude' : 'dsh', opinion: detail.payload?.opinion || '', busy: detail.state === 'running', result: detail.kind === 'acceptance' && detail.state === 'done' ? { overall: detail.result?.report?.overall, status: detail.result?.report?.status, reportPath: detail.result?.paths?.jsonPath } : null, error: detail.error || '', generated: detail.kind === 'acceptance-brief' && detail.state === 'done' ? detail.result : null, draft: detail.payload?.draft || detail.result?.brief || '', draftEdited: Boolean(detail.payload?.draftEdited), jobId: detail.id })
+        } else if (detail.kind === 'devdoc') {
+          setActiveWorkspace('devdoc')
+          setRecordsOpen(false)
+          setDevDocOpen(false)
+          setDevDocBusy(detail.state === 'running' ? 'review' : '')
+          if (detail.state === 'done') {
+            const doc = detail.result.doc || detail.result
+            setDevDoc(doc)
+            setDevDocDraft(doc.content || '')
+            setDevDocNotice(tt('devDocAiReviewNotice'))
+          }
+        }
+        setJob(detail.state === 'running' ? detail : null)
+      }
 
       /* Consume a finished job exactly once. */
       useEffect(() => {
@@ -1175,8 +1273,44 @@ window.__ModuleLoader__.load({
           setRefined(job.result)
           setPromptText(withHeader(title, job.result.dshPrompt || ''))
           setPhase('refined')
+        } else if (job.kind === 'first-question') {
+          setFirstQuestion((current) => current
+            ? { ...current, busy: false, error: '', generated: job.result, answer: '', draft: String(job.result.draft || '').replaceAll('{{answer}}', '（待填写）'), draftTemplate: String(job.result.draft || ''), draftEdited: false }
+            : current)
+          refreshClaudeSessionList()
+          refreshUsage()
+        } else if (job.kind === 'acceptance-brief') {
+          setDialog((current) => current
+            ? { ...current, busy: false, generated: job.result, draft: String(job.result.brief || ''), draftEdited: false }
+            : current)
+          refreshClaudeSessionList()
+          refreshUsage()
+        } else if (job.kind === 'acceptance') {
+          setDialog((current) => current
+            ? { ...current, busy: false, result: { overall: job.result.report?.overall, status: job.result.report?.status, reportPath: job.result.paths?.jsonPath } }
+            : current)
+        } else if (job.kind === 'devdoc') {
+          const doc = job.result.doc || job.result
+          setDevDoc(doc)
+          setDevDocDraft(doc.content || '')
+          setDevDocBusy('')
+          setDevDocConfirmed(false)
+          setDevDocNotice(tt('devDocAiReviewNotice'))
         }
       }, [job && job.id, job && job.state, consumedJobId])
+
+      useEffect(() => {
+        if (!job || !['error', 'interrupted', 'cancelled'].includes(job.state)) return
+        const message = job.state === 'interrupted' ? '任务因 Host 重启而中断，可重试。' : job.error || (job.state === 'cancelled' ? tt('cancelled') : '')
+        if (job.kind === 'first-question') {
+          setFirstQuestion((current) => current ? { ...current, busy: false, error: message } : current)
+        } else if (job.kind === 'acceptance' || job.kind === 'acceptance-brief') {
+          setDialog((current) => current ? { ...current, busy: false, error: message } : current)
+        } else if (job.kind === 'devdoc') {
+          setDevDocBusy('')
+          setDevDocError(message)
+        }
+      }, [job && job.id, job && job.state])
 
       /* A visible clock while a run is in flight. */
       useEffect(() => {
@@ -1230,6 +1364,11 @@ window.__ModuleLoader__.load({
         () => new Map(allSessions.map((session) => [session.sessionId, session])),
         [allSessions],
       )
+      const visibleJobs = useMemo(
+        () => backgroundJobs.filter((item) => ['running', 'interrupted', 'error'].includes(item.state)
+          || (item.state === 'done' && ['first-question', 'acceptance-brief', 'acceptance', 'devdoc'].includes(item.kind))).slice(0, 4),
+        [backgroundJobs],
+      )
 
       function fail(message, hint) {
         setNotice({ message, hint: hint || '' })
@@ -1243,21 +1382,16 @@ window.__ModuleLoader__.load({
         setNotice(null)
         setDispatch({ state: 'idle' })
         try {
-          const data = await request('/jobs', {
-            method: 'POST',
-            body: JSON.stringify({
-              kind: 'brief',
-              projectDir: form.projectDir,
-              projectName: form.projectName,
-              goal: form.goal,
-              permissionMode: form.permissionMode,
-            }),
+          const started = await startBackgroundJob('brief', {
+            projectDir: form.projectDir,
+            projectName: form.projectName,
+            goal: form.goal,
+            permissionMode: form.permissionMode,
           })
           setBrief(null)
           setRefined(null)
           setPromptText('')
           setAnswer('')
-          setJob(data.job)
           setPhase('brief')
         } catch (error) {
           fail(error.message, error.hint)
@@ -1266,10 +1400,7 @@ window.__ModuleLoader__.load({
 
       async function cancelJob() {
         if (!job) return
-        try {
-          await request('/jobs/cancel', { method: 'POST', body: JSON.stringify({ id: job.id }) })
-        } catch {}
-        setJob((current) => (current ? { ...current, state: 'cancelled', phase: tt('cancelled') } : current))
+        await cancelBackgroundJob(job.id)
       }
 
       async function submitAnswer() {
@@ -1279,19 +1410,14 @@ window.__ModuleLoader__.load({
         }
         setNotice(null)
         try {
-          const data = await request('/jobs', {
-            method: 'POST',
-            body: JSON.stringify({
-              kind: 'refine',
-              projectDir: form.projectDir,
-              projectName: form.projectName,
-              goal: form.goal,
-              permissionMode: form.permissionMode,
-              brief,
-              answer,
-            }),
+          await startBackgroundJob('refine', {
+            projectDir: form.projectDir,
+            projectName: form.projectName,
+            goal: form.goal,
+            permissionMode: form.permissionMode,
+            brief,
+            answer,
           })
-          setJob(data.job)
           setPhase('answer')
         } catch (error) {
           fail(error.message, error.hint)
@@ -1433,22 +1559,66 @@ window.__ModuleLoader__.load({
         return kind
       }
 
+      async function openDevDoc() {
+        setActiveWorkspace('devdoc')
+        setRecordsOpen(false)
+        setDevDocOpen(false)
+        setDevDocError('')
+        setDevDocNotice('')
+        setRecordBusy(true)
+        try {
+          const [sessionsResult, docResult] = await Promise.allSettled([
+            listSessions(),
+            form.projectDir ? getDevDoc(form.projectDir) : Promise.resolve({ doc: null }),
+          ])
+          if (sessionsResult.status === 'fulfilled') setAllSessions(sessionsResult.value.items || [])
+          if (docResult.status === 'fulfilled') {
+            setDevDoc(docResult.value?.doc || null)
+            setDevDocDraft(docResult.value?.doc?.content || '')
+          } else {
+            setDevDocError(docResult.reason?.message || '')
+          }
+        } catch (error) {
+          setDevDocError(error.message)
+        } finally {
+          setRecordBusy(false)
+        }
+      }
+
+      async function selectAcceptance(item) {
+        if (!item || !item.sessionId) return
+        setRecordBusy(true)
+        try {
+          const payload = await request(`/acceptance?id=${encodeURIComponent(item.sessionId)}`)
+          setAcceptanceSelected(payload)
+          const failed = (payload.report?.checks || []).filter((check) => check.conclusion !== 'pass')
+          setReworkDraft(failed.map((check) => `${check.id}：${check.name}\n请修复：${check.note || '补充可验证证据。'}`).join('\n\n'))
+        } catch (error) {
+          setRecordError(error.message)
+        } finally {
+          setRecordBusy(false)
+        }
+      }
+
       async function openRecords() {
+        setActiveWorkspace('records')
         setRecordsOpen(true)
         setRecordSelected(null)
         setReviewSelected(null)
+        setAcceptanceSelected(null)
         setDevDocOpen(false)
         setDevDocError('')
         setDevDocNotice('')
         setRecordBusy(true)
         setRecordError('')
         try {
-          const [recordsResult, sessionsResult, reviewsResult, devDocResult] =
+          const [recordsResult, sessionsResult, reviewsResult, devDocResult, acceptanceResult] =
             await Promise.allSettled([
               listRecords(),
               listClaudeSessions(),
               getReviews(),
               form.projectDir ? getDevDoc(form.projectDir) : Promise.resolve({ doc: null }),
+              request('/acceptance/list'),
             ])
           if (recordsResult.status === 'fulfilled') {
             setRecordItems(
@@ -1465,6 +1635,11 @@ window.__ModuleLoader__.load({
           if (reviewsResult.status === 'fulfilled') {
             setReviewEntries(
               Array.isArray(reviewsResult.value.entries) ? reviewsResult.value.entries : [],
+            )
+          }
+          if (acceptanceResult.status === 'fulfilled') {
+            setAcceptanceEntries(
+              Array.isArray(acceptanceResult.value.items) ? acceptanceResult.value.items : [],
             )
           }
           if (devDocResult.status === 'fulfilled') {
@@ -1510,10 +1685,32 @@ window.__ModuleLoader__.load({
       }
 
       function closeRecords() {
+        setActiveWorkspace('new')
         setRecordsOpen(false)
         setRecordSelected(null)
         setReviewSelected(null)
+        setAcceptanceSelected(null)
         setDevDocOpen(false)
+      }
+
+      function criteriaForReport(report) {
+        const task = report?.task?.summary || ''
+        const match = task.match(/(?:验收标准|验收条件|Acceptance criteria)[:：]?([\s\S]{0,5000})/i)
+        if (!match) return []
+        const criteria = match[1]
+          .split(/\r?\n/)
+          .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)]|[A-Z]\d+[.:：])\s*/, '').trim())
+          .filter(Boolean)
+          .slice(0, 20)
+        const checks = Array.isArray(report.checks) ? report.checks : []
+        return criteria.map((text, index) => {
+          const id = `A${index + 1}`
+          const matching = checks.find((check) => new RegExp(`\\b${id}\\b`, 'i').test(`${check.name || ''} ${check.note || ''}`))
+          const conclusion = matching && Array.isArray(matching.evidence) && matching.evidence.length
+            ? matching.conclusion
+            : 'uncertain'
+          return { id, text, conclusion }
+        })
       }
 
       function devDocStatusLabel(status) {
@@ -1633,25 +1830,15 @@ window.__ModuleLoader__.load({
         setDevDocError('')
         setDevDocNotice('')
         try {
-          const data = await refineDevDoc({
+          await startBackgroundJob('devdoc', {
             projectDir: form.projectDir,
             projectName: form.projectName,
             title: form.projectName,
             content: devDocDraft,
           })
-          setDevDoc(data.doc)
-          setDevDocDraft(data.doc.content || '')
-          setDevDocNotice(
-            data.doc.status === 'approved'
-              ? tt('devDocApprovedNotice')
-              : data.doc.status === 'needs_info'
-                ? tt('devDocNeedsInfoNotice')
-                : tt('devDocRejectedNotice'),
-          )
         } catch (error) {
-          setDevDocError(error.message)
-        } finally {
           setDevDocBusy('')
+          setDevDocError(error.message)
         }
       }
 
@@ -1660,7 +1847,7 @@ window.__ModuleLoader__.load({
           setDevDocError(tt('devDocNeedProject'))
           return
         }
-        if (!devDoc || devDoc.status !== 'approved') {
+        if (!devDoc || devDoc.status !== 'approved' || !devDocConfirmed) {
           setDevDocError(tt('devDocNotApproved'))
           return
         }
@@ -1710,7 +1897,7 @@ window.__ModuleLoader__.load({
             ),
             h(
               Button,
-              { variant: 'link', onClick: () => setDevDocOpen(false) },
+              { variant: 'link', onClick: () => setActiveWorkspace('new') },
               tt('recordsBack'),
             ),
           ),
@@ -1756,6 +1943,7 @@ window.__ModuleLoader__.load({
             onChange: (event) => {
               const value = event.target.value
               setDevDocDraft(value)
+              setDevDocConfirmed(false)
               if (devDoc) setDevDoc({ ...devDoc, status: 'draft' })
             },
           }),
@@ -1778,12 +1966,24 @@ window.__ModuleLoader__.load({
                 variant: 'primary',
                 busy: devDocBusy === 'send',
                 disabled:
-                  !form.projectDir || !devDoc || devDoc.status !== 'approved' || devDocBusy,
+                  !form.projectDir || !devDoc || devDoc.status !== 'approved' || !devDocConfirmed || Boolean(devDocBusy),
                 onClick: deliverCurrentDevDoc,
               },
               tt('devDocSend'),
             ),
           ),
+          devDoc && devDoc.status === 'approved'
+            ? h(
+                'label',
+                { className: 'cc-switch' },
+                h('input', {
+                  type: 'checkbox',
+                  checked: devDocConfirmed,
+                  onChange: (event) => setDevDocConfirmed(event.target.checked),
+                }),
+                tt('devDocConfirmDelivery'),
+              )
+            : null,
           h(
             'label',
             { className: 'cc-field' },
@@ -1935,26 +2135,17 @@ window.__ModuleLoader__.load({
         }
         setFirstQuestion((current) => (current ? { ...current, busy: true, error: '' } : current))
         try {
-          const data = await askFirstQuestion({
+          const started = await startBackgroundJob('first-question', {
             sessionId: firstQuestion.entry.sessionId,
+            projectDir: firstQuestion.entry.projectDir,
+            title: firstQuestion.entry.title,
             requirement: firstQuestion.requirement,
+            answer: firstQuestion.answer,
+            draft: firstQuestion.draft,
+            draftTemplate: firstQuestion.draftTemplate,
+            draftEdited: firstQuestion.draftEdited,
           })
-          setFirstQuestion((current) =>
-            current
-              ? {
-                  ...current,
-                  busy: false,
-                  error: '',
-                  generated: data,
-                  answer: '',
-                  draft: String(data.draft || '').replaceAll('{{answer}}', '（待填写）'),
-                  draftTemplate: String(data.draft || ''),
-                  draftEdited: false,
-                }
-              : current,
-          )
-          refreshClaudeSessionList()
-          refreshUsage()
+          setFirstQuestion((current) => current ? { ...current, busy: true, jobId: started.id } : current)
         } catch (error) {
           setFirstQuestion((current) =>
             current ? { ...current, busy: false, error: error.message } : current,
@@ -2004,8 +2195,8 @@ window.__ModuleLoader__.load({
         if (!entry || !entry.sessionId) return
         setDialog({
           entry,
-          mode: 'claude',
-          opinion: '',
+          mode: entry.mode || 'claude',
+          opinion: entry.opinion || '',
           busy: false,
           result: null,
           error: '',
@@ -2022,23 +2213,15 @@ window.__ModuleLoader__.load({
         try {
           if (mode === 'dsh') {
             if (!dialog.generated) {
-              const data = await dispatchAcceptance({
+              const started = await startBackgroundJob('acceptance-brief', {
                 projectDir: entry.projectDir || form.projectDir,
                 sessionId: entry.sessionId,
                 opinion,
+                entry,
+                draft: dialog.draft,
+                draftEdited: dialog.draftEdited,
               })
-              setDialog((current) =>
-                current
-                  ? {
-                      ...current,
-                      busy: false,
-                      error: '',
-                      generated: data,
-                      draft: String(data.brief || ''),
-                      draftEdited: false,
-                    }
-                  : current,
-              )
+              setDialog((current) => current ? { ...current, busy: true, jobId: started.id } : current)
               return
             }
             if (!dialog.draft.trim()) {
@@ -2055,28 +2238,15 @@ window.__ModuleLoader__.load({
             })
             setToast(tt('dshAcceptOpened'))
             setDialog(null)
+            setRecordsOpen(false)
+            setAcceptanceSelected(null)
             try {
               await refreshSessions(data.sessionId)
             } catch {}
             openSession(data.sessionId)
           } else {
-            const data = await runClaudeAcceptance({
-              sessionId: entry.sessionId,
-              opinion,
-            })
-            setDialog((current) =>
-              current
-                ? {
-                    ...current,
-                    busy: false,
-                    result: {
-                      overall: data.report && data.report.overall,
-                      status: data.report && data.report.status,
-                      reportPath: data.paths && data.paths.jsonPath,
-                    },
-                  }
-                : current,
-            )
+            const started = await startBackgroundJob('acceptance', { sessionId: entry.sessionId, opinion, entry })
+            setDialog((current) => current ? { ...current, busy: true, jobId: started.id } : current)
           }
         } catch (error) {
           setDialog((current) =>
@@ -2625,7 +2795,28 @@ window.__ModuleLoader__.load({
         }
         return labels[label] || label || '最近使用'
       }
-      if (phase === 'dispatched') {
+      if (activeWorkspace === 'devdoc') {
+        main = h('div', { className: 'cc-devDocWorkspace' }, renderDevDocView())
+      } else if (activeWorkspace === 'continue' && !firstQuestion) {
+        main = h(
+          'section',
+          { className: 'cc-card cc-sessionWorkspace' },
+          h('div', { className: 'cc-cardTitle' }, tt('workspaceContinue')),
+          h('input', {
+            className: 'cc-input', type: 'search', value: sessionSearch, placeholder: tt('sessionSearch'),
+            onChange: (event) => setSessionSearch(event.target.value),
+          }),
+          h('div', { className: 'cc-sessionPicker' }, sortedSessions.filter((item) => {
+            const query = sessionSearch.trim().toLowerCase()
+            return !query || `${item.title || ''} ${item.cwd || ''} ${item.sessionId}`.toLowerCase().includes(query)
+          }).slice(0, 80).map((item) => h(
+            'button',
+            { type: 'button', key: item.sessionId, className: 'cc-sessionPick', onClick: () => openFirstQuestionDialog({ sessionId: item.sessionId, projectDir: item.cwd, title: (item.cwd || '').split(/[\\/]/).filter(Boolean).pop() || item.sessionId }) },
+            h('span', { className: 'cc-recordTitle' }, (item.cwd || '').split(/[\\/]/).filter(Boolean).pop() || item.cwd || item.sessionId),
+            h('span', { className: 'cc-sessionPickerMeta' }, `${item.running ? tt('sessionRunning') : timeAgo(item.updatedAt, tt)} · ${item.sessionId.slice(-6)}`),
+          ))),
+        )
+      } else if (phase === 'dispatched') {
         main = rightCard
       } else if (phase === 'refined') {
         main = h(
@@ -2709,36 +2900,61 @@ window.__ModuleLoader__.load({
         ),
         h(
           'div',
-          { className: 'cc-toolbar' },
+          { className: 'cc-panelToolbar' },
           h(
             'div',
-            { className: 'cc-steps' },
-            steps.map((step, index) =>
-              h(
-                React.Fragment,
-                { key: step.key },
-                index > 0 ? h('span', { className: 'cc-sep', key: `sep-${index}` }, '›') : null,
-                h(
-                  'span',
-                  {
-                    className: `cc-step${index < stepIndex ? ' done' : index === stepIndex ? ' active' : ''}`,
-                  },
-                  h('b', null, index < stepIndex ? '✓' : String(index + 1)),
-                  h('span', null, tt(step.key)),
-                ),
-              ),
-            ),
+            { className: 'cc-modeTabs', role: 'tablist', 'aria-label': tt('workspaceModes') },
+            [
+              ['new', tt('workspaceNew')],
+              ['continue', tt('workspaceContinue')],
+              ['devdoc', tt('devDoc')],
+            ].map(([mode, label]) => h(
+              'button',
+              {
+                type: 'button', key: mode, role: 'tab',
+                'aria-selected': activeWorkspace === mode,
+                className: activeWorkspace === mode ? 'on' : '',
+                onClick: () => {
+                  if (mode === 'devdoc') openDevDoc()
+                  else {
+                    setActiveWorkspace(mode)
+                    setRecordsOpen(false)
+                    if (mode === 'continue') listSessions().then((data) => setAllSessions(data.items || [])).catch(() => {})
+                  }
+                },
+              },
+              label,
+            )),
           ),
-          h(Button, { variant: 'ghost', onClick: openCurrentFirstQuestion }, tt('chooseSession')),
-          h(Button, { variant: 'link', onClick: openRecords }, tt('records')),
+          visibleJobs.length
+            ? h(
+                'div',
+                { className: 'cc-backgroundJobs' },
+                visibleJobs.map((item) => h(
+                  'div',
+                  { className: 'cc-backgroundJob', key: item.id },
+                  h('span', null, `${item.phase || item.kind} · ${item.state}`),
+                  item.state === 'running' ? h(Button, { variant: 'link', onClick: () => cancelBackgroundJob(item.id) }, tt('cancel')) : null,
+                  h(Button, { variant: 'link', onClick: () => resumeBackgroundJob(item) }, item.state === 'running' ? tt('jobOpen') : item.state === 'done' ? tt('jobDetails') : tt('retry')),
+                )),
+              )
+            : null,
+          h('div', { className: 'cc-toolbarActions' },
+            h(Button, { variant: 'link', onClick: openRecords }, tt('records')),
+          ),
         ),
         notice ? h(Notice, { notice, tt }) : null,
         main,
         h(
-          'div',
+          'details',
           { className: 'cc-card cc-reviewSettings' },
-          h('div', { className: 'cc-cardTitle' }, tt('reviewSettings')),
-          h('div', { className: 'cc-hint' }, tt('reviewSettingsHint')),
+          h(
+            'summary',
+            { className: 'cc-settingsSummary' },
+            h('span', { className: 'cc-cardTitle' }, tt('reviewSettings')),
+            h('span', { className: 'cc-hint' }, reviewSettings.defaultAction === 'claude' ? tt('defaultActionClaude') : tt('defaultActionNone')),
+          ),
+          h('div', { className: 'cc-reviewSettingsBody' },
           h(
             'label',
             { className: 'cc-switch' },
@@ -2796,6 +3012,7 @@ window.__ModuleLoader__.load({
               }),
               h('span', { className: 'cc-hint' }, tt('dailyBudgetHint')),
             ),
+          ),
           ),
         ),
         h(
@@ -3085,7 +3302,15 @@ window.__ModuleLoader__.load({
                   ),
                   h(
                     Button,
-                    { variant: 'link', onClick: closeFirstQuestion },
+                    {
+                      variant: 'link',
+                      onClick: firstQuestion.busy && firstQuestion.jobId
+                        ? async () => {
+                            await cancelBackgroundJob(firstQuestion.jobId)
+                            setFirstQuestion((current) => current ? { ...current, busy: false } : current)
+                          }
+                        : closeFirstQuestion,
+                    },
                     tt('acceptanceCancel'),
                   ),
                 ),
@@ -3239,7 +3464,15 @@ window.__ModuleLoader__.load({
                   ),
                   h(
                     Button,
-                    { variant: 'link', onClick: closeDialog },
+                    {
+                      variant: 'link',
+                      onClick: dialog.busy && dialog.jobId
+                        ? async () => {
+                            await cancelBackgroundJob(dialog.jobId)
+                            setDialog((current) => current ? { ...current, busy: false } : current)
+                          }
+                        : closeDialog,
+                    },
                     tt('acceptanceCancel'),
                   ),
                 ),
@@ -3300,6 +3533,35 @@ window.__ModuleLoader__.load({
                         )
                       : null,
                   )
+                : acceptanceSelected
+                ? h(
+                    'div',
+                    { className: 'cc-recordView' },
+                    h('div', { className: 'cc-actions' }, h(Button, { variant: 'link', onClick: () => setAcceptanceSelected(null) }, tt('recordsBack'))),
+                    h('div', { className: `cc-verdictBanner ${acceptanceSelected.report?.overall || 'uncertain'}` },
+                      h('strong', null, String(acceptanceSelected.report?.overall || 'uncertain').toUpperCase()),
+                      h('span', null, `${acceptanceSelected.report?.status || ''} · ${acceptanceSelected.title || acceptanceSelected.sessionId}`),
+                    ),
+                    h('div', { className: 'cc-recordMeta' }, `会话：${acceptanceSelected.sessionId} · ${acceptanceSelected.workspace || ''}`),
+                    criteriaForReport(acceptanceSelected.report).map((criterion) => h(
+                      'div', { className: `cc-accCheck ${criterion.conclusion}`, key: criterion.id },
+                      h('div', { className: 'cc-accCheckName' }, `${criterion.id} · ${criterion.text}`),
+                      h('div', { className: 'cc-hint' }, criterion.conclusion === 'pass' ? tt('criterionPass') : criterion.conclusion === 'fail' ? tt('criterionFail') : tt('criterionUnknown')),
+                    )),
+                    (acceptanceSelected.report?.checks || []).map((check) => h(
+                      'div', { className: `cc-accCheck ${check.conclusion}`, key: check.id },
+                      h('div', { className: 'cc-accCheckName' }, `${check.name || check.id} · ${check.conclusion}`),
+                      h('div', { className: 'cc-hint' }, check.note || ''),
+                    )),
+                    acceptanceSelected.report?.rework?.length ? h('div', { className: 'cc-reviewOpinion' }, acceptanceSelected.report.rework.join('\n')) : null,
+                    reworkDraft ? h(React.Fragment, null,
+                      h('div', { className: 'cc-label' }, tt('reworkDraft')),
+                      h('div', { className: 'cc-hint' }, tt('reworkDraftHint')),
+                      h('textarea', { className: 'cc-textarea cc-draft', rows: 8, value: reworkDraft, onChange: (event) => setReworkDraft(event.target.value) }),
+                      h(Button, { variant: 'primary', onClick: () => openAcceptanceDialog({ sessionId: acceptanceSelected.sessionId, projectDir: acceptanceSelected.workspace, title: acceptanceSelected.title, opinion: reworkDraft, mode: 'dsh' }) }, tt('reworkDraft')),
+                    ) : null,
+                    acceptanceSelected.reportPath ? h('code', { className: 'cc-code' }, acceptanceSelected.reportPath) : null,
+                  )
                 : recordSelected
                 ? h(
                     'div',
@@ -3334,7 +3596,7 @@ window.__ModuleLoader__.load({
                       {
                         type: 'button',
                         className: 'cc-recordItem cc-devDocEntry',
-                        onClick: () => setDevDocOpen(true),
+                        onClick: () => openDevDoc(),
                       },
                       h('span', { className: 'cc-recordKind' }, tt('devDoc')),
                       h(
@@ -3420,6 +3682,16 @@ window.__ModuleLoader__.load({
                             ),
                           ),
                     ),
+                    h('div', { className: 'cc-sectionTitle' }, `${tt('acceptanceRecent')}（${acceptanceEntries.length}）`),
+                    acceptanceEntries.length === 0
+                      ? h('div', { className: 'cc-hint' }, tt('reviewListEmpty'))
+                      : acceptanceEntries.map((item) => h(
+                          'button',
+                          { type: 'button', className: 'cc-reviewListItem', key: item.sessionId, onClick: () => selectAcceptance(item) },
+                          h('span', { className: `cc-reviewBadge ${item.overall || 'uncertain'}` }, h('span', { className: 'cc-reviewBadgeVerdict' }, String(item.overall || 'uncertain').toUpperCase())),
+                          h('span', { className: 'cc-recordTitle' }, item.title || item.sessionId),
+                          h('span', { className: 'cc-recordTime' }, timeAgo(Date.parse(item.generatedAt), tt)),
+                        )),
                     h(
                       'div',
                       { className: 'cc-sectionTitle' },
@@ -3555,11 +3827,7 @@ window.__ModuleLoader__.load({
             body: JSON.stringify({ sessionId }),
           }),
         dispatchAcceptance: (payload) =>
-          request('/acceptance/dispatch', {
-            method: 'POST',
-            body: JSON.stringify(payload),
-            timeoutMs: 180_000,
-          }),
+          request('/jobs', { method: 'POST', body: JSON.stringify({ kind: 'acceptance-brief', ...payload }) }),
         sendAcceptanceDispatch: (payload) =>
           request('/acceptance/dispatch/send', {
             method: 'POST',
@@ -3567,17 +3835,9 @@ window.__ModuleLoader__.load({
             timeoutMs: 90_000,
           }),
         runClaudeAcceptance: (payload) =>
-          request('/acceptance/claude', {
-            method: 'POST',
-            body: JSON.stringify(payload),
-            timeoutMs: 600_000,
-          }),
+          request('/jobs', { method: 'POST', body: JSON.stringify({ kind: 'acceptance', ...payload }) }),
         askFirstQuestion: (payload) =>
-          request('/session/first-question', {
-            method: 'POST',
-            body: JSON.stringify(payload),
-            timeoutMs: 150_000,
-          }),
+          request('/jobs', { method: 'POST', body: JSON.stringify({ kind: 'first-question', ...payload }) }),
         sendFirstQuestion: (payload) =>
           request('/session/first-question/send', {
             method: 'POST',
@@ -3816,6 +4076,15 @@ window.__ModuleLoader__.load({
 .cc-step.done b { background: var(--dsw-alias-state-success-primary); border-color: var(--dsw-alias-state-success-primary); color: #fff; }
 .cc-sep { color: var(--dsw-alias-label-secondary); opacity: 0.45; }
 .cc-grid { display: grid; grid-template-columns: minmax(300px, 0.92fr) minmax(340px, 1.12fr); gap: 16px; align-items: start; }
+.cc-panel { container-type: inline-size; }
+@container (max-width: 720px) {
+  .cc-grid { grid-template-columns: 1fr; }
+  .cc-hero { align-items: flex-start; }
+  .cc-chips { justify-content: flex-start; }
+  .cc-modeTabs { flex-wrap: wrap; }
+  .cc-modeTabs button { flex-basis: calc(50% - 4px); }
+  .cc-backgroundJob { flex-wrap: wrap; }
+}
 @media (max-width: 940px) { .cc-grid { grid-template-columns: 1fr; } }
 .cc-card {
   display: flex; flex-direction: column; gap: 14px; min-inline-size: 0;
@@ -4067,7 +4336,25 @@ window.__ModuleLoader__.load({
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11.5px; line-height: 1.55; background: var(--dsw-alias-bg-base);
 }
-.cc-reviewSettings { gap: 10px; }
+.cc-reviewSettings { display: block; padding: 14px 18px; border: 1px solid #e6ded1; border-radius: 14px; background: #fffdf8; }
+.cc-panelToolbar { display: flex; flex-direction: column; gap: 8px; }
+.cc-modeTabs { display: flex; gap: 6px; padding: 4px; border: 1px solid #e6ded1; border-radius: 10px; background: #fffaf2; }
+.cc-modeTabs button { flex: 1 1 0; min-block-size: 34px; border: 0; border-radius: 7px; background: transparent; color: #6f6a63; font: inherit; font-size: 12px; cursor: pointer; }
+.cc-modeTabs button.on { background: #fffdf8; color: #2f2a25; box-shadow: 0 1px 3px rgba(47,42,37,.08); }
+.cc-toolbarActions { display: flex; justify-content: flex-end; gap: 8px; }
+.cc-backgroundJobs { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid #e8c9b8; border-radius: 9px; background: #fff6ef; }
+.cc-backgroundJob { display: flex; align-items: center; gap: 8px; min-inline-size: 0; color: #6f6a63; font-size: 11.5px; }
+.cc-backgroundJob > span { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-sessionWorkspace { max-inline-size: none; }
+.cc-sessionPicker { display: flex; flex-direction: column; gap: 5px; max-block-size: 56vh; overflow: auto; }
+.cc-sessionPick { display: flex; align-items: baseline; gap: 10px; inline-size: 100%; padding: 9px 10px; border: 1px solid #e6ded1; border-radius: 8px; background: #fffdf8; color: #2f2a25; text-align: start; font: inherit; cursor: pointer; }
+.cc-sessionPick:hover { border-color: #d97757; background: #fdf3eb; }
+.cc-sessionPickerMeta { margin-inline-start: auto; color: #6f6a63; font-size: 10.5px; white-space: nowrap; }
+.cc-devDocWorkspace { inline-size: 100%; }
+.cc-settingsSummary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; list-style: none; cursor: pointer; }
+.cc-settingsSummary::-webkit-details-marker { display: none; }
+.cc-settingsSummary .cc-hint { flex: 1 1 auto; }
+.cc-reviewSettingsBody { display: flex; flex-direction: column; gap: 10px; padding-block-start: 8px; }
 .cc-switch {
   display: inline-flex; align-items: center; gap: 7px;
   font-size: 12px; color: var(--dsw-alias-label-secondary); cursor: pointer;
