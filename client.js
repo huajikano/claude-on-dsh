@@ -111,7 +111,7 @@ window.__ModuleLoader__.load({
         recordsDeleteYes: '确认删除',
         recordsDeleteNo: '取消',
         devDoc: '开发文档',
-        devDocApproved: '已批准',
+        devDocApproved: '预审通过',
         devDocRejected: '已驳回',
         devDocNeedsInfo: '需补充',
         devDocDraft: '草稿',
@@ -123,17 +123,17 @@ window.__ModuleLoader__.load({
         devDocExportCurrent: '导出当前文档',
         devDocProject: '项目目录',
         devDocNeedProject: '请先在项目设定里选择项目目录。',
-        devDocPlaceholder: '先导出开发文档模板，填写后导入；也可以直接粘贴 Markdown。',
+        devDocPlaceholder: '导出模板后，直接填写目标、功能和已有资源；其他可留空。旧模板也支持导入。',
         devDocReview: 'Claude 预审',
-        devDocAiReviewNotice: '以下为 Claude 的 AI 预审意见，不代表真人审批；请你确认后再交给 DSH。',
-        devDocConfirmDelivery: '我已审阅预审意见，确认交给 DSH',
+        devDocAiReviewNotice: '方案预审通过后，经你确认再交给 DSH；成品仍需逐项测试和界面检查。',
+        devDocConfirmDelivery: '我已核对本版需求、设计方向和验收标准，确认交给 DSH',
         devDocSend: '交给 DSH',
         devDocTarget: '交付方式',
         devDocNewSession: '新建 DSH 会话',
-        devDocVerdict: '审批结论',
+        devDocVerdict: 'AI 预审结论',
         devDocBlockers: '阻塞项',
         devDocQuestions: '需补充材料',
-        devDocApprove: '批准',
+        devDocApprove: '通过',
         devDocNeedsInfoDecision: '需补充',
         devDocNotApplicable: '不适用',
         devDocConditional: '有条件同意（按未批准）',
@@ -141,11 +141,11 @@ window.__ModuleLoader__.load({
         devDocTemplateExported: '模板已导出',
         devDocImported: '已导入，请检查后预审',
         devDocSaved: '草稿已保存',
-        devDocUnresolved: '还有未替换的用户填写项',
-        devDocApprovedNotice: '角色审批通过，可以交给 DSH。',
+        devDocUnresolved: '请填写必填内容',
+        devDocApprovedNotice: '方案预审通过，请审阅后确认交给 DSH。',
         devDocRejectedNotice: '未通过审批，请按驳回原因修改后重新预审。',
         devDocNeedsInfoNotice: '材料不足，请补充后重新预审。',
-        devDocNotApproved: '文档尚未通过硬审批，不能交给 DSH。',
+        devDocNotApproved: '请完成方案预审，并确认当前项目的这版文档。',
         devDocSentNew: '已新建 DSH 会话并交付开发文档',
         devDocSentExisting: '已把开发文档发到目标会话',
         reviewList: '验收记录',
@@ -356,7 +356,7 @@ window.__ModuleLoader__.load({
         recordsDeleteYes: 'Confirm delete',
         recordsDeleteNo: 'Cancel',
         devDoc: 'Development document',
-        devDocApproved: 'Approved',
+        devDocApproved: 'Pre-review passed',
         devDocRejected: 'Rejected',
         devDocNeedsInfo: 'Needs info',
         devDocDraft: 'Draft',
@@ -368,14 +368,14 @@ window.__ModuleLoader__.load({
         devDocExportCurrent: 'Export current document',
         devDocProject: 'Project directory',
         devDocNeedProject: 'Select a project directory first.',
-        devDocPlaceholder: 'Export the template, fill it in, then import; you can also paste Markdown directly.',
+        devDocPlaceholder: 'Export and fill in the goal, features, and resources. Other fields are optional. Older templates still import.',
         devDocReview: 'Claude pre-review',
-        devDocAiReviewNotice: 'This is Claude’s AI pre-review, not human approval. Confirm it yourself before delivery to DSH.',
-        devDocConfirmDelivery: 'I reviewed the pre-review and confirm delivery to DSH',
+        devDocAiReviewNotice: 'Confirm the reviewed plan before handing it to DSH. The finished work still needs functional and visual verification.',
+        devDocConfirmDelivery: 'I checked this version’s requirements, design, and acceptance criteria and confirm delivery to DSH',
         devDocSend: 'Hand to DSH',
         devDocTarget: 'Delivery',
         devDocNewSession: 'New DSH session',
-        devDocVerdict: 'Verdict',
+        devDocVerdict: 'AI pre-review verdict',
         devDocBlockers: 'Blockers',
         devDocQuestions: 'Missing materials',
         devDocApprove: 'Approve',
@@ -386,11 +386,11 @@ window.__ModuleLoader__.load({
         devDocTemplateExported: 'Template exported',
         devDocImported: 'Imported; review it before pre-review',
         devDocSaved: 'Draft saved',
-        devDocUnresolved: 'Unresolved user-fill placeholders',
-        devDocApprovedNotice: 'All roles approved; ready to hand to DSH.',
+        devDocUnresolved: 'Fill in the required information',
+        devDocApprovedNotice: 'The plan passed pre-review; check and confirm it before delivery.',
         devDocRejectedNotice: 'Rejected; fix the blockers and run pre-review again.',
         devDocNeedsInfoNotice: 'More information is required; resubmit after filling it in.',
-        devDocNotApproved: 'The document has not passed the hard approval gate.',
+        devDocNotApproved: 'Finish pre-review and confirm this version for the current project.',
         devDocSentNew: 'Created a new DSH session and handed over the document',
         devDocSentExisting: 'Sent the document to the target session',
         reviewList: 'Acceptance records',
@@ -1050,6 +1050,9 @@ window.__ModuleLoader__.load({
       const [devDocNotice, setDevDocNotice] = useState('')
       const [devDocSession, setDevDocSession] = useState('')
       const [devDocConfirmed, setDevDocConfirmed] = useState(false)
+      useEffect(() => {
+        setDevDocConfirmed(false)
+      }, [form.projectDir, devDoc && devDoc.contentHash, devDoc && devDoc.status, devDocDraft])
       const [reviewSettings, setReviewSettings] = useState({
         autoPrompt: true,
         defaultAction: 'none',
@@ -1560,6 +1563,7 @@ window.__ModuleLoader__.load({
       }
 
       async function openDevDoc() {
+        setDevDocConfirmed(false)
         setActiveWorkspace('devdoc')
         setRecordsOpen(false)
         setDevDocOpen(false)
@@ -1760,6 +1764,7 @@ window.__ModuleLoader__.load({
       }
 
       async function importDevDocFile() {
+        setDevDocConfirmed(false)
         if (!form.projectDir) {
           setDevDocError(tt('devDocNeedProject'))
           return
@@ -1819,17 +1824,22 @@ window.__ModuleLoader__.load({
           setDevDocError(tt('devDocNeedProject'))
           return
         }
-        const unresolved = [...new Set(devDocDraft.match(/\{\{[^}]+\}\}/g) || [])]
-        if (unresolved.length > 0) {
-          setDevDocError(
-            `${tt('devDocUnresolved')} ${unresolved.length}：${unresolved.slice(0, 5).join('、')}`,
-          )
-          return
-        }
+        setDevDocConfirmed(false)
         setDevDocBusy('review')
         setDevDocError('')
         setDevDocNotice('')
         try {
+          const validation = await request('/devdoc/validate', {
+            method: 'POST',
+            body: JSON.stringify({ content: devDocDraft }),
+          })
+          if (!validation.valid) {
+            setDevDocError(
+              `${tt('devDocUnresolved')}：${[...(validation.missing || []), ...(validation.placeholders || [])].join('、')}`,
+            )
+            setDevDocBusy('')
+            return
+          }
           await startBackgroundJob('devdoc', {
             projectDir: form.projectDir,
             projectName: form.projectName,
@@ -1847,7 +1857,7 @@ window.__ModuleLoader__.load({
           setDevDocError(tt('devDocNeedProject'))
           return
         }
-        if (!devDoc || devDoc.status !== 'approved' || !devDocConfirmed) {
+        if (!devDoc || devDoc.status !== 'approved' || !devDocConfirmed || devDocDraft !== devDoc.content || normalizeProject(devDoc.projectDir) !== normalizeProject(form.projectDir)) {
           setDevDocError(tt('devDocNotApproved'))
           return
         }
@@ -1857,6 +1867,7 @@ window.__ModuleLoader__.load({
           const result = await sendDevDoc({
             projectDir: form.projectDir,
             sessionId: devDocSession,
+            confirmedHash: devDoc.approvedHash,
           })
           setToast(
             result.existing ? tt('devDocSentExisting') : tt('devDocSentNew'),
@@ -1955,7 +1966,7 @@ window.__ModuleLoader__.load({
               {
                 variant: 'primary',
                 busy: devDocBusy === 'review',
-                disabled: !form.projectDir || !devDocDraft.trim(),
+                disabled: !form.projectDir || !devDocDraft.trim() || Boolean(devDocBusy),
                 onClick: reviewCurrentDevDoc,
               },
               tt('devDocReview'),
@@ -1966,7 +1977,7 @@ window.__ModuleLoader__.load({
                 variant: 'primary',
                 busy: devDocBusy === 'send',
                 disabled:
-                  !form.projectDir || !devDoc || devDoc.status !== 'approved' || !devDocConfirmed || Boolean(devDocBusy),
+                  !form.projectDir || !devDoc || devDoc.status !== 'approved' || !devDocConfirmed || devDocDraft !== devDoc.content || normalizeProject(devDoc.projectDir) !== normalizeProject(form.projectDir) || Boolean(devDocBusy),
                 onClick: deliverCurrentDevDoc,
               },
               tt('devDocSend'),
@@ -3862,7 +3873,7 @@ window.__ModuleLoader__.load({
           request('/devdoc/refine', {
             method: 'POST',
             body: JSON.stringify(payload),
-            timeoutMs: 240_000,
+            timeoutMs: 660_000,
           }),
         sendDevDoc: (payload) =>
           request('/devdoc/send', {
