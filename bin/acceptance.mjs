@@ -13,6 +13,7 @@ import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { executeAcceptance } from '../lib/acceptance/kernel.js'
+import { createPromptStore } from '../lib/prompts.js'
 import { findSessionLog, readSessionLog } from '../lib/acceptance/session-log.js'
 
 function parseArgs(argv) {
@@ -109,6 +110,7 @@ if (positional[0] !== 'run' || !positional[1]) {
 }
 const sessionId = positional[1]
 const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
+const prompts = createPromptStore(path.join(home, 'claude-on-dsh', 'prompts.json'))
 const file = findSessionLog(home, sessionId)
 const { meta, events } = readSessionLog(file)
 const workspace = meta.cwd
@@ -126,6 +128,7 @@ const result = await executeAcceptance({
   runJudge: runClaude,
   options: {
     judge: options.judge,
+    renderPrompt: prompts.render,
     judgeRetries: options.judgeRetries,
     allowedPaths: options.allowedPaths,
     reportDir: options.reportDir,

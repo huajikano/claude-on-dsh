@@ -265,6 +265,66 @@ test('dispatched phase does not bring back the deleted acceptance section', () =
   assert.ok(!contains(tree, '立即验收'))
 })
 
+test('prompt editor loads current text, preserves drafts on errors, saves and restores defaults', async () => {
+  render(null)
+  const editor = components.get('PromptEditor').type
+  const state = []
+  const originalFetch = globalThis.fetch
+  let current = { id: 'brief', title: '新项目首问', description: 'Description', variables: ['goal'], required: ['goal'], value: 'DEFAULT {{goal}}', defaultValue: 'DEFAULT {{goal}}', customized: false }
+  let failure = false
+  const writes = []
+  globalThis.fetch = async (_url, options) => {
+    if (options.method === 'POST') {
+      const body = JSON.parse(options.body)
+      writes.push(body)
+      if (failure) return { ok: false, status: 400, text: async () => JSON.stringify({ error: { message: '请保留必需占位符：{{goal}}' } }) }
+      current = { ...current, value: body.reset ? current.defaultValue : body.value, customized: !body.reset }
+    }
+    return { ok: true, status: 200, text: async () => JSON.stringify({ items: [current] }) }
+  }
+  const renderEditor = () => {
+    hookState = state; hookIndex = 0
+    try { return createElement(editor, { ids: ['brief'], tt: (key) => dictionaries['claude-on-dsh'].zh[key] || key }) }
+    finally { hookState = null }
+  }
+  const textArea = (tree) => findNodes(tree, (node) => node.type === 'textarea')[0]
+  const button = (tree, label) => findNodes(tree, (node) => node.type === 'button' && contains(node, label))[0]
+  try {
+    let tree = renderEditor()
+    await tree.props.onToggle({ currentTarget: { open: true } })
+    tree = renderEditor()
+    assert.equal(textArea(tree).props.value, 'DEFAULT {{goal}}')
+    assert.ok(contains(tree, '{{goal}}'))
+    assert.ok(contains(tree, '(必需)'))
+    textArea(tree).props.onChange({ target: { value: 'CUSTOM {{goal}}' } })
+    tree = renderEditor()
+    assert.ok(contains(tree, '有未保存修改'))
+    failure = true
+    await button(tree, '保存提示词').props.onClick()
+    tree = renderEditor()
+    assert.equal(textArea(tree).props.value, 'CUSTOM {{goal}}')
+    assert.ok(contains(tree, '请保留必需占位符'))
+    failure = false
+    await button(tree, '保存提示词').props.onClick()
+    tree = renderEditor()
+    assert.equal(writes.at(-1).value, 'CUSTOM {{goal}}')
+    assert.ok(contains(tree, '已自定义'))
+    assert.ok(contains(tree, '已保存，下次生成生效'))
+    await button(tree, '恢复默认').props.onClick()
+    tree = renderEditor()
+    assert.deepEqual(writes.at(-1), { id: 'brief', reset: true })
+    assert.equal(textArea(tree).props.value, 'DEFAULT {{goal}}')
+    assert.equal(button(tree, '保存提示词').props.disabled, true)
+  } finally { globalThis.fetch = originalFetch }
+})
+
+test('prompt editors are available in new-project, continue and development-document steps', () => {
+  for (const activeWorkspace of ['new', 'continue', 'devdoc']) {
+    const tree = render({ v: 1, savedAt: Date.now(), activeWorkspace })
+    assert.ok(findNodes(tree, (node) => node.props?.className === 'cc-promptDetails').length >= 1)
+  }
+})
+
 test('requests carry a timeout signal and map aborts to a readable error', async () => {
   const originalFetch = globalThis.fetch
   let init

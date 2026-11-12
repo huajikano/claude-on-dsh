@@ -4,6 +4,10 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import childProcess from 'node:child_process'
+import { syncBuiltinESMExports } from 'node:module'
+import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { apply, planningPermissionMode } from '../../index.js'
 
 // Isolate detection and history from the user's real profile. With no
@@ -256,6 +260,96 @@ test('session picker API collapses ordinary fork chains and retains independent 
     assert.deepEqual(result.data.items[1].forkSessionIds, ['session-latest', 'session-middle', 'session-root'])
     assert.equal(harness.calls.inspections, 0, 'listing needs summary metadata only')
   })
+})
+
+test('prompt settings persist, validate, reset and reach exported templates and DSH messages', async () => {
+  await withIsolatedEnv(async (root) => {
+    const workspace = path.join(root, 'workspace')
+    await mkdir(workspace, { recursive: true })
+    const harness = createHarness(workspace)
+    apply(harness.ctx, {})
+    const initial = await harness.invoke('GET', '/prompts')
+    assert.equal(initial.status, 200)
+    const desktopDefault = initial.data.items.find((item) => item.id === 'desktop')
+    const save = (id, value) => harness.invoke('POST', '/prompts', { id, value })
+    assert.equal((await save('desktop', 'CUSTOM {{goal}}')).status, 200)
+    const generated = await harness.invoke('POST', '/prompt', { projectName: 'Demo', goal: 'Build a timer' })
+    assert.equal(generated.data.prompt, 'CUSTOM Build a timer')
+    assert.equal((await save('desktop', 'lost goal')).status, 400)
+    assert.equal((await save('desktop', '{{goal}} {{bad}}')).status, 400)
+    assert.equal((await save('no-such-prompt', 'x')).status, 400)
+    await save('handoff', 'HANDOFF {{title}} {{body}}')
+    const handoff = await harness.invoke('POST', '/prompts/handoff', { title: 'Demo', body: 'Keep {{answer}} literally' })
+    assert.equal(handoff.data.content, 'HANDOFF Demo Keep {{answer}} literally')
+    await save('devdocRules', 'CUSTOM DOCUMENT RULES')
+    const exported = await harness.invoke('GET', '/devdoc/template', undefined, '?projectDir=' + encodeURIComponent(workspace))
+    assert.match(exported.data.content, /CUSTOM DOCUMENT RULES/)
+    await save('firstQuestionSend', 'CONTINUE {{requirement}} Q={{question}} A={{answer}}')
+    const sent = await harness.invoke('POST', '/session/first-question/send', { sessionId: 'session-demo', projectDir: workspace, requirement: 'Need export', question: 'Format?', answer: 'CSV' })
+    assert.equal(sent.status, 200)
+    assert.equal(harness.calls.prompts[0].content[0].text, 'CONTINUE Need export Q=Format? A=CSV')
+    const restarted = createHarness(workspace)
+    apply(restarted.ctx, {})
+    assert.equal((await restarted.invoke('POST', '/prompt', { goal: 'After restart' })).data.prompt, 'CUSTOM After restart')
+    assert.equal((await restarted.invoke('POST', '/prompts', { id: 'desktop', reset: true })).status, 200)
+    assert.equal((await restarted.invoke('GET', '/prompts')).data.items.find((item) => item.id === 'desktop').value, desktopDefault.defaultValue)
+    assert.equal((await restarted.invoke('GET', '/prompts')).data.items.find((item) => item.id === 'handoff').customized, true)
+  })
+})
+
+test('saved opening and refine prompts are sent to Claude and the saved handoff wraps the result', async (t) => {
+  const runs = []
+  t.mock.method(childProcess, 'spawn', (_file, args) => {
+    const child = new EventEmitter()
+    child.stdin = new PassThrough()
+    child.stdout = new PassThrough()
+    child.stderr = new PassThrough()
+    child.kill = () => true
+    let input = ''
+    child.stdin.on('data', (chunk) => { input += chunk.toString() })
+    child.stdin.on('finish', () => {
+      runs.push({ input, args })
+      const schema = JSON.parse(args[args.indexOf('--json-schema') + 1])
+      const data = schema.properties.dshPrompt
+        ? { projectTitle: 'Demo', summary: 'Ready', plan: [], acceptance: [], risks: [], dshPrompt: 'BUILD BODY' }
+        : { projectTitle: 'Demo', understanding: 'Goal', firstQuestion: 'Question?', questionOptions: ['A'], planOutline: ['Step'], handoffDraft: 'Draft' }
+      child.stdout.end(JSON.stringify({ structured_output: data, session_id: 'mock-claude', total_cost_usd: 0 }))
+      child.emit('close', 0)
+    })
+    return child
+  })
+  syncBuiltinESMExports()
+  try {
+    await withIsolatedEnv(async (root) => {
+      const workspace = path.join(root, 'workspace')
+      const executable = path.join(root, 'claude.exe')
+      await mkdir(workspace, { recursive: true })
+      await writeFile(executable, '')
+      const harness = createHarness(workspace)
+      apply(harness.ctx, { claudeCliPath: executable })
+      const save = async (id, value) => assert.equal((await harness.invoke('POST', '/prompts', { id, value })).status, 200)
+      await save('commanderSystem', 'CUSTOM PLANNING ROLE')
+      await save('brief', 'OPEN {{goal}}')
+      await save('refine', 'REFINE {{goal}} ANSWER {{answer}}')
+      await save('handoff', 'CUSTOM HANDOFF {{title}} {{body}}')
+      async function run(kind, body) {
+        const started = await harness.invoke('POST', '/jobs', { kind, projectDir: workspace, goal: 'Build a timer', ...body })
+        const job = await waitFor(async () => {
+          const response = await harness.invoke('GET', '/jobs', undefined, '?id=' + started.data.job.id)
+          return response.data.job.state !== 'running' ? response.data.job : null
+        })
+        assert.equal(job.state, 'done', job.error)
+        return job.result
+      }
+      const brief = await run('brief')
+      const refined = await run('refine', { brief, answer: 'Offline' })
+      assert.equal(runs.length, 2)
+      assert.equal(runs[0].input, 'OPEN Build a timer')
+      assert.equal(runs[1].input, 'REFINE Build a timer ANSWER Offline')
+      assert.equal(runs[0].args[runs[0].args.indexOf('--append-system-prompt') + 1], 'CUSTOM PLANNING ROLE')
+      assert.equal(refined.handoffPrompt, 'CUSTOM HANDOFF Demo BUILD BODY')
+    })
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports() }
 })
 
 test('configured model is reported by /detect', async () => {

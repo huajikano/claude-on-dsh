@@ -20,6 +20,17 @@ window.__ModuleLoader__.load({
         nav: 'Claude on DSH',
         title: 'Claude on DSH',
         subtitle: 'Claude 负责首问与规划，DSH 接手执行整案。',
+        prompts: '提示词',
+        promptsHint: '保存后用于本插件后续生成，所有项目共用。已生成内容不会自动更新；需要时请重新生成。输出格式与审批校验仍由程序控制。',
+        promptSave: '保存提示词',
+        promptReset: '恢复默认',
+        promptDefault: '默认',
+        promptCustom: '已自定义',
+        promptUnsaved: '有未保存修改',
+        promptSaved: '已保存，下次生成生效',
+        promptVariables: '占位符',
+        promptRequired: '必需',
+        promptRetry: '重新加载提示词',
         stepSetup: '项目设定',
         stepAsk: 'Claude 首问',
         stepHandoff: '交给 DSH',
@@ -265,6 +276,17 @@ window.__ModuleLoader__.load({
         nav: 'Claude on DSH',
         title: 'Claude on DSH',
         subtitle: 'Claude asks the opening question and plans; DSH executes the whole project.',
+        prompts: 'Prompts',
+        promptsHint: 'Saved prompts apply to future generation in this plugin across all projects. Existing content does not update automatically; generate again to apply changes. Output formats and approval checks remain enforced.',
+        promptSave: 'Save prompt',
+        promptReset: 'Restore default',
+        promptDefault: 'Default',
+        promptCustom: 'Customized',
+        promptUnsaved: 'Unsaved changes',
+        promptSaved: 'Saved for the next generation',
+        promptVariables: 'Placeholders',
+        promptRequired: 'required',
+        promptRetry: 'Reload prompts',
         stepSetup: 'Project',
         stepAsk: 'Claude asks',
         stepHandoff: 'Hand off to DSH',
@@ -943,6 +965,62 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function PromptEditor({ ids, tt }) {
+      const [items, setItems] = useState(null)
+      const [selected, setSelected] = useState(ids[0])
+      const [drafts, setDrafts] = useState({})
+      const [busy, setBusy] = useState(false)
+      const [error, setError] = useState('')
+      const [saved, setSaved] = useState(false)
+      const mounted = useRef(true)
+      useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+      const item = items?.find((entry) => entry.id === selected)
+      const draft = item ? drafts[item.id] ?? item.value : ''
+      async function load() {
+        setBusy(true); setError('')
+        try {
+          const data = await request('/prompts')
+          if (mounted.current) setItems(data.items || [])
+        } catch (failure) { if (mounted.current) setError(failure.message) }
+        finally { if (mounted.current) setBusy(false) }
+      }
+      async function save(reset = false) {
+        if (!item) return
+        setBusy(true); setError(''); setSaved(false)
+        try {
+          const data = await request('/prompts', { method: 'POST', body: JSON.stringify({ id: item.id, ...(reset ? { reset: true } : { value: draft }) }) })
+          if (!mounted.current) return
+          setItems(data.items || [])
+          setDrafts((current) => { const next = { ...current }; delete next[item.id]; return next })
+          setSaved(true)
+        } catch (failure) { if (mounted.current) setError(failure.message) }
+        finally { if (mounted.current) setBusy(false) }
+      }
+      return h('details', { className: 'cc-promptDetails', onToggle: (event) => { if (event.currentTarget.open && !busy) return load() } },
+        h('summary', null, tt('prompts')),
+        h('div', { className: 'cc-promptBody' },
+          h('p', { className: 'cc-hint' }, tt('promptsHint')),
+          items ? h('select', { className: 'cc-select', 'aria-label': tt('prompts'), value: selected, disabled: busy, onChange: (event) => { setSelected(event.target.value); setSaved(false); setError('') } },
+            ids.map((id) => { const entry = items.find((candidate) => candidate.id === id); return entry ? h('option', { key: id, value: id }, entry.title) : null }),
+          ) : null,
+          item ? h(React.Fragment, null,
+            h('div', { className: 'cc-hint' }, item.description),
+            h('div', { className: 'cc-hint' }, draft !== item.value ? tt('promptUnsaved') : tt(item.customized ? 'promptCustom' : 'promptDefault')),
+            item.variables.length ? h('div', { className: 'cc-promptVariables' }, tt('promptVariables') + '：',
+              item.variables.map((name) => h('span', { key: name }, h('code', null, '{{' + name + '}}'), ' ' + (item.variableDescriptions?.[name] || '') + (item.required.includes(name) ? ' (' + tt('promptRequired') + ')' : ''))),
+            ) : null,
+            h('textarea', { className: 'cc-textarea cc-promptEditor', 'aria-label': item.title, spellCheck: false, rows: 14, maxLength: 40000, value: draft, disabled: busy, onChange: (event) => { setDrafts((current) => ({ ...current, [item.id]: event.target.value })); setSaved(false) } }),
+            h('div', { className: 'cc-actions' },
+              h(Button, { variant: 'primary', busy, disabled: busy || !draft.trim() || draft === item.value, onClick: () => save() }, tt('promptSave')),
+              h(Button, { disabled: busy || (!item.customized && draft === item.value), onClick: () => save(true) }, tt('promptReset')),
+            ),
+          ) : busy ? h('div', { className: 'cc-hint' }, tt('loading')) : null,
+          error ? h('div', { className: 'cc-inlineWarn', role: 'alert' }, error, !items ? h(Button, { variant: 'link', onClick: load }, tt('promptRetry')) : null) : null,
+          saved ? h('div', { className: 'cc-hint', role: 'status' }, tt('promptSaved')) : null,
+        ),
+      )
+    }
+
     function sessionLabel(item) {
       return String(item?.title || '').trim()
         || String(item?.cwd || '').split(/[\\/]/).filter(Boolean).pop()
@@ -962,6 +1040,7 @@ window.__ModuleLoader__.load({
         'section',
         { className: 'cc-card cc-sessionWorkspace' },
         h('div', { className: 'cc-cardTitle' }, tt('workspaceContinue')),
+        h(PromptEditor, { ids: ['firstQuestion', 'firstQuestionSend'], tt }),
         h('input', {
           className: 'cc-input', type: 'search', value: query, placeholder: tt('sessionSearch'),
           onChange: (event) => onQueryChange(event.target.value),
@@ -1309,7 +1388,7 @@ window.__ModuleLoader__.load({
         } else if (job.kind === 'refine') {
           const title = job.result.projectTitle || form.projectName || brief?.projectTitle || ''
           setRefined(job.result)
-          setPromptText(withHeader(title, job.result.dshPrompt || ''))
+          setPromptText(job.result.handoffPrompt || withHeader(title, job.result.dshPrompt || ''))
           setPhase('refined')
         } else if (job.kind === 'first-question') {
           setFirstQuestion((current) => current
@@ -1561,7 +1640,7 @@ window.__ModuleLoader__.load({
         }
       }
 
-      function continueFromDesktop() {
+      async function continueFromDesktop() {
         if (desktopReply.trim().length === 0) {
           fail(tt('desktopNoReply'))
           return
@@ -1575,8 +1654,11 @@ window.__ModuleLoader__.load({
           risks: [],
           dshPrompt: desktopReply.trim(),
         })
-        setPromptText(withHeader(title, desktopReply.trim()))
-        setPhase('refined')
+        try {
+          const data = await request('/prompts/handoff', { method: 'POST', body: JSON.stringify({ title, body: desktopReply.trim() }) })
+          setPromptText(data.content)
+          setPhase('refined')
+        } catch (error) { fail(error.message, error.hint) }
       }
 
       async function openCcSwitch() {
@@ -1978,6 +2060,7 @@ window.__ModuleLoader__.load({
               ? h(Button, { variant: 'link', onClick: exportCurrentDevDoc }, tt('devDocExportCurrent'))
               : null,
           ),
+          h(PromptEditor, { ids: ['devdocReview', 'devdocRules', 'devdocSend'], tt }),
           form.projectDir
             ? h('div', { className: 'cc-hint' }, `${tt('devDocProject')}：${form.projectDir}`)
             : h('div', { className: 'cc-inlineWarn' }, tt('devDocNeedProject')),
@@ -2360,6 +2443,7 @@ window.__ModuleLoader__.load({
         'div',
         { className: 'cc-card' },
         h('div', { className: 'cc-cardTitle' }, tt('engine')),
+        h(PromptEditor, { key: form.engine, ids: form.engine === 'cli' ? ['brief', 'commanderSystem'] : ['desktop'], tt }),
         h(
           'div',
           { className: 'cc-seg', role: 'tablist', 'aria-label': tt('engine') },
@@ -2661,6 +2745,7 @@ window.__ModuleLoader__.load({
                     onChange: (event) => setAnswer(event.target.value),
                   }),
                 ),
+                h(PromptEditor, { ids: ['refine', 'handoff', 'commanderSystem'], tt }),
                 h(
                   'div',
                   { className: 'cc-actions' },
@@ -2764,6 +2849,7 @@ window.__ModuleLoader__.load({
             h(
               Section,
               { title: tt('handoff'), aside: h(Button, { variant: 'link', onClick: () => copyBrief(promptText, false) }, tt('copy')) },
+              h(PromptEditor, { ids: ['refine', 'handoff', 'commanderSystem'], tt }),
               h('div', { className: 'cc-hint' }, tt('handoffHint')),
               h('textarea', {
                 className: 'cc-textarea cc-textareaCode',
@@ -3036,6 +3122,7 @@ window.__ModuleLoader__.load({
             'details',
             { className: 'cc-advanced' },
             h('summary', null, tt('advancedSettings')),
+            h(PromptEditor, { ids: ['review', 'judge', 'judgeSystem', 'acceptanceBrief', 'acceptanceFallback', 'terminalReview', 'terminalSystem'], tt }),
             h(
               'label',
               { className: 'cc-field cc-budgetField' },
@@ -3157,6 +3244,7 @@ window.__ModuleLoader__.load({
                   `${tt('firstQuestion')}：${firstQuestion.entry.title || firstQuestion.entry.sessionId}`,
                 ),
                 h('div', { className: 'cc-hint' }, tt('firstQuestionHint')),
+                h(PromptEditor, { ids: ['firstQuestion', 'firstQuestionSend'], tt }),
                 firstQuestion.generated
                   ? null
                   : h(
@@ -3380,6 +3468,7 @@ window.__ModuleLoader__.load({
                   `${tt('acceptance')}：${dialog.entry.title || dialog.entry.sessionId}`,
                 ),
                 h('div', { className: 'cc-inlineWarn' }, tt('acceptanceCostWarn')),
+                h(PromptEditor, { key: dialog.mode, ids: dialog.mode === 'dsh' ? ['acceptanceBrief', 'acceptanceFallback'] : ['judge', 'judgeSystem'], tt }),
                 dialog.mode === 'dsh' && dialog.generated
                   ? null
                   : h(
@@ -4386,6 +4475,12 @@ window.__ModuleLoader__.load({
 .cc-backgroundJobs { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid #e8c9b8; border-radius: 9px; background: #fff6ef; }
 .cc-backgroundJob { display: flex; align-items: center; gap: 8px; min-inline-size: 0; color: #6f6a63; font-size: 11.5px; }
 .cc-backgroundJob > span { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-promptDetails { margin-block: 10px; border: 1px solid #e6ded1; border-radius: 8px; background: #fcfaf6; }
+.cc-promptDetails > summary { padding: 8px 10px; color: #9d4b32; font-size: 12px; cursor: pointer; }
+.cc-promptBody { display: flex; flex-direction: column; gap: 10px; padding: 0 12px 12px; }
+.cc-promptEditor { min-block-size: 240px; max-block-size: 60vh; font: 12px/1.65 ui-monospace, Consolas, monospace; resize: vertical; }
+.cc-promptVariables { display: flex; flex-wrap: wrap; gap: 5px; font-size: 11px; color: #6f6a63; }
+.cc-promptVariables code { border-radius: 4px; background: #f0ebe3; padding: 2px 5px; }
 .cc-sessionWorkspace { max-inline-size: none; }
 .cc-sessionPicker { display: flex; flex-direction: column; gap: 5px; max-block-size: 56vh; overflow: auto; }
 .cc-sessionPick { display: flex; align-items: center; gap: 10px; inline-size: 100%; padding: 9px 10px; border: 1px solid #e6ded1; border-radius: 8px; background: #fffdf8; color: #2f2a25; text-align: start; font: inherit; cursor: pointer; }

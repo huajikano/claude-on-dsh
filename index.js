@@ -23,6 +23,7 @@ import { executeAcceptance } from './lib/acceptance/kernel.js'
 import { extractTask, buildFacts, recentConversation } from './lib/acceptance/facts.js'
 import { createJobs } from './lib/jobs.js'
 import { latestForkSessions } from './lib/sessions.js'
+import { createPromptStore, renderPrompt } from './lib/prompts.js'
 import {
   devDocTemplate, analyzeDevDocInput,
   buildDevDocReviewPrompt, DEV_DOC_SCHEMA, normalizeDevDoc,
@@ -66,12 +67,6 @@ const MODES = new Set(['plan', 'dontAsk', 'acceptEdits', 'bypassPermissions', 'a
 /** Modes the panel may request for a planning run. A browser request cannot
  * escalate beyond these; only an explicit config value may. */
 const PLANNING_MODES = new Set(['plan', 'dontAsk', 'acceptEdits'])
-
-const COMMANDER_SYSTEM = [
-  '你是 DSH 的「Claude 指挥官」，只负责三件事：理解需求、提出一个决定方案走向的首问、写一份可以直接执行的交接书。',
-  '你不写代码、不修改文件、不执行命令、不调用工具。',
-  '输出必须是简体中文（用户使用其他语言时跟随用户语言），文字务实、具体、可验收，避免空话。',
-].join('\n')
 
 const BRIEF_SCHEMA = {
   type: 'object',
@@ -575,79 +570,20 @@ function startClaudeRun({ executable, prompt, cwd, schema, systemPrompt, permiss
 /* prompts                                                             */
 /* ------------------------------------------------------------------ */
 
-function buildBriefPrompt({ projectName, projectDir, goal }) {
-  return [
-    '你是「Claude 指挥官」，正在为一个新项目做开局。执行代理 DSH 会在你之后接手全部实现工作。',
-    '',
-    '## 项目信息',
-    `- 项目名称：${projectName || '（未命名，请根据目标命名）'}`,
-    `- 项目目录：${projectDir || '（尚未指定）'}`,
-    '- 用户目标：',
-    goal,
-    '',
-    '## 你要输出',
-    '1. projectTitle：一个简短的项目名。',
-    '2. understanding：用 3-6 句说明你对目标的理解，点明隐含约束与成功标准。',
-    '3. firstQuestion：只提出 1 个最关键的首问。它的不同答案必须会实质改变技术方案、范围或验收标准；不要问能从目标里推断的信息。',
-    '4. questionOptions：为这个首问给出 2-4 个可直接点选的候选答案，使用短句。',
-    '5. planOutline：3-8 步的初步计划，每一步都是一个可验收的产出。',
-    '6. handoffDraft：一段给 DSH 的完整任务书，包含背景、目标、范围、交付物、验收标准、约束与风险；尚未确认的点标为「待确认」，不要虚构用户偏好。',
-    '',
-    '## 约束',
-    '- 全部使用简体中文（用户使用其他语言时跟随用户语言）。',
-    '- 不修改任何文件、不执行命令、不调用工具。',
-    '- 内容要具体、可执行、可验收，避免空泛的鼓励性表述。',
-  ].join('\n')
+function buildBriefPrompt({ projectName, projectDir, goal }, render = renderPrompt) {
+  return render('brief', { projectName: projectName || '（未命名，请根据目标命名）', projectDir: projectDir || '（尚未指定）', goal })
 }
 
-function buildRefinePrompt({ projectName, projectDir, goal, brief, answer }) {
-  return [
-    '你是「Claude 指挥官」。用户已经回答了你提出的首问，现在请定稿交接书。',
-    '',
-    '## 项目信息',
-    `- 项目名称：${projectName || brief?.projectTitle || '（未命名）'}`,
-    `- 项目目录：${projectDir || '（未指定）'}`,
-    '- 用户目标：',
-    goal,
-    '',
-    '## 你此前的判断',
-    `- 理解：${text(brief?.understanding)}`,
-    `- 首问：${text(brief?.firstQuestion)}`,
-    `- 初步计划：${(brief?.planOutline ?? []).map((step, index) => `${index + 1}) ${step}`).join(' ')}`,
-    '',
-    '## 用户的回答',
-    answer,
-    '',
-    '## 你要输出',
-    '1. projectTitle：最终项目名。',
-    '2. summary：2-4 句定稿说明，体现用户回答带来的变化。',
-    '3. plan：4-10 步的最终计划，每步包含 step（做什么）与 outcome（可验收的产出）。',
-    '4. acceptance：3-8 条验收标准，必须可检验。',
-    '5. risks：0-5 条主要风险与应对。',
-    '6. dshPrompt：一份可以直接交给 DSH 执行的任务书。要求：自包含、不依赖追问、把用户回答融入方案、写清背景/目标/范围/交付物/验收标准/约束。不要以「根据对话」开头，不要复述这段指令。',
-    '',
-    '## 约束',
-    '- 全部使用简体中文（用户使用其他语言时跟随用户语言）。',
-    '- 不修改任何文件、不执行命令、不调用工具。',
-    '- 任务书面向执行代理，要能直接开工。',
-  ].join('\n')
+function buildRefinePrompt({ projectName, projectDir, goal, brief, answer }, render = renderPrompt) {
+  return render('refine', {
+    projectName: projectName || brief?.projectTitle || '（未命名）', projectDir: projectDir || '（未指定）', goal,
+    understanding: text(brief?.understanding), firstQuestion: text(brief?.firstQuestion),
+    planOutline: (brief?.planOutline ?? []).map((step, index) => (index + 1) + ') ' + step).join(' '), answer,
+  })
 }
 
-function buildDesktopPrompt({ projectName, projectDir, goal }) {
-  return [
-    '你是我这次项目的总指挥。请先不要写代码，只做开局判断。',
-    '',
-    `项目名称：${projectName || '（未命名）'}`,
-    `项目目录：${projectDir || '（未指定）'}`,
-    '项目目标：',
-    goal,
-    '',
-    '请按以下顺序回复：',
-    '1. 你对目标的理解，以及隐含约束与成功标准。',
-    '2. 一个最关键的首问（只需一个，答案会改变方案走向），附 2-4 个候选答案。',
-    '3. 初步计划（3-8 步，每步一个可验收产出）。',
-    '4. 一份可直接交给执行代理 DSH 的任务书：背景、目标、范围、交付物、验收标准、约束与风险。',
-  ].join('\n')
+function buildDesktopPrompt({ projectName, projectDir, goal }, render = renderPrompt) {
+  return render('desktop', { projectName: projectName || '（未命名）', projectDir: projectDir || '（未指定）', goal })
 }
 
 /* ------------------------------------------------------------------ */
@@ -1059,6 +995,7 @@ async function deleteClaudeSessionFiles(sessionId) {
  * @param {Record<string, unknown>} [config]
  */
 export function apply(ctx, config = {}) {
+  const prompts = createPromptStore(path.join(dshHome(), 'claude-on-dsh', 'prompts.json'))
   const settings = {
     claudeCliPath: text(config.claudeCliPath, DEFAULTS.claudeCliPath),
     desktopAppPath: text(config.desktopAppPath, DEFAULTS.desktopAppPath),
@@ -1211,6 +1148,7 @@ export function apply(ctx, config = {}) {
     ctx,
     config: gateConfig,
     runJudge: judgeRunner,
+    promptRenderer: prompts.render,
     logger: (line) => {
       try {
         ctx.logger?.info?.(line)
@@ -1236,7 +1174,7 @@ export function apply(ctx, config = {}) {
       workspace,
       gatePolicy: 'manual',
       runJudge: async (params) => judgeRunner({ ...params, onCancel }),
-      options: { ...acceptanceOptions, opinion },
+      options: { ...acceptanceOptions, opinion, renderPrompt: prompts.render },
       logger: (line) => {
         try {
           ctx.logger?.info?.(`[claude-on-dsh:acceptance] ${line}`)
@@ -1306,20 +1244,7 @@ export function apply(ctx, config = {}) {
       `用户验收要求：${custom || '无'}`,
       `任务标准编号：${(Array.isArray(facts.criteria) ? facts.criteria : []).map((criterion) => `${criterion.id}=${criterion.text}`).join('；') || '未找到任务书验收标准'}`,
     ].join('\n\n')
-    const prompt = [
-      '你是独立验收者。请阅读项目与这次 DSH 会话的真实测试记录，给出验收意见。',
-      '要求：',
-      '- 结论 verdict 只能是 pass / fail / uncertain；',
-      '- opinion 用自然语言说明实际验证了什么、哪些没有验证、是否回应了任务目标；',
-      '- evidence 是关键证据数组，引用真实命令、输出、文件或 git 状态；',
-      '- 无法验证的项必须标 uncertain，禁止猜 pass；',
-      '- 如果用户给了验收要求，必须优先对照；',
-      '',
-      '上下文：',
-      context,
-      '',
-      '输出 JSON { verdict, opinion, evidence }。',
-    ].join('\n')
+    const prompt = prompts.render('review', { context })
     const schema = {
       type: 'object',
       properties: {
@@ -1384,7 +1309,7 @@ export function apply(ctx, config = {}) {
       projectName: text(projectName).trim() || path.basename(dir),
       projectDir: dir,
       content: source,
-    })
+    }, prompts.render)
     const schema = DEV_DOC_SCHEMA
     const result = await runClaudeFor({
       executable,
@@ -1462,22 +1387,9 @@ export function apply(ctx, config = {}) {
     if (text(confirmedHash) !== doc.approvedHash) {
       throw userError('请确认当前版本的开发文档', '请重新打开文档，审阅后勾选确认再交给 DSH。', 409)
     }
-    const brief = [
-      '[开发方案已预审并经用户确认]',
-      `项目：${doc.title || path.basename(dir)}`,
-      `审批结论：${doc.verdict}`,
-      doc.summary ? `审批摘要：${doc.summary}` : '',
-      '',
-      '按以下开发文档实现。方案预审通过不表示成品已经通过验收。',
-      '逐项验证 A 编号标准；有界面先提交关键页面供用户确认，交付时检查实际视觉与操作。',
-      '不得擅自删除必做功能、改变设计方向或降低验收标准；实质变更先交用户确认。',
-      '',
-      '<document>',
-      doc.content,
-      '</document>',
-    ]
-      .filter(Boolean)
-      .join('\n')
+    const brief = prompts.render('devdocSend', {
+      title: doc.title || path.basename(dir), verdict: doc.verdict, summary: doc.summary || '', content: doc.content,
+    })
 
     if (sessionId) {
       if (!ACCEPTANCE_ID.test(sessionId)) throw userError('会话 ID 无效', '', 400)
@@ -1587,22 +1499,7 @@ export function apply(ctx, config = {}) {
           : '不可用'
       }`,
     ].join('\n\n')
-    const prompt = [
-      '你在一个已经存在的 DSH 对话中接手。请先根据下面的上下文了解项目和之前的对话，',
-      '再根据用户的新要求，生成一条「首问」消息，发回这个 DSH 对话。',
-      '不要复述旧任务书，也不要重复最近对话；首问必须针对新要求提出新的、最关键的确认点。',
-      '',
-      '上下文：',
-      context,
-      '',
-      `用户新要求：${requirement}`,
-      '',
-      '输出 JSON：',
-      '- understanding：2-3 句，说明你从最近对话里了解到的现状（给用户看，不要复述旧任务）',
-      '- question：一个最关键、最需要先确认的新问题',
-      '- choices：0-4 个候选答案（可为空数组）',
-      '- brief：发给 DSH 的完整消息，包含首问与必要背景，1-3 句，直接可回答/执行',
-    ].join('\n')
+    const prompt = prompts.render('firstQuestion', { context, requirement })
     const schema = {
       type: 'object',
       properties: {
@@ -1704,15 +1601,7 @@ export function apply(ctx, config = {}) {
   }
 
   function firstQuestionMessage({ requirement, question, answer, brief }) {
-    const lines = ['[Claude 首问]']
-    const request = text(requirement).trim()
-    if (request) lines.push(`新要求：${request}`)
-    const background = text(brief).trim()
-    if (background && background !== question.trim()) lines.push(`背景：${background}`)
-    lines.push(`首问：${question}`)
-    lines.push(`用户回答：${answer}`)
-    lines.push('请据此继续推进；只有遇到无法从上下文推断的阻塞项才提问。')
-    return lines.join('\n')
+    return prompts.render('firstQuestionSend', { requirement: text(requirement).trim(), brief: text(brief).trim(), question, answer })
   }
 
   async function sendFirstQuestionToSession(
@@ -2000,15 +1889,7 @@ export function apply(ctx, config = {}) {
       required: ['title', 'brief'],
       additionalProperties: false,
     }
-    const prompt = [
-      '你是验收指挥。请为下面的项目写一份交给 DSH 执行代理的验收任务书。',
-      `项目目录：${dir}`,
-      `任务背景：${goal || '未提供，请按项目现状验收'}`,
-      '要求 DSH：实际读取项目与 git 状态；运行可用的构建/测试/lint 并记录真实输出；',
-      '逐项给出 pass / fail / uncertain 与证据；无法验证的项标 uncertain，禁止猜 pass；',
-      `把报告写入 ${reportPath}，并在会话中给出结论。`,
-      'brief 必须自包含、可直接执行，不要依赖追问；输出 JSON { title, brief }。',
-    ].join('\n')
+    const prompt = prompts.render('acceptanceBrief', { projectDir: dir, goal: goal || '未提供，请按项目现状验收', reportPath })
     let brief = ''
     let title = ''
     if (executable) {
@@ -2029,17 +1910,7 @@ export function apply(ctx, config = {}) {
     }
     if (!brief) {
       title = `验收：${titleBase}`
-      brief = [
-        `请对项目做独立验收：${dir}`,
-        '',
-        `任务背景：${goal || '未提供，请按项目现状判断'}`,
-        '',
-        '要求：',
-        '1. 读取项目与 git 状态，列出实际改动文件；',
-        '2. 运行可用的构建/测试/lint，记录真实命令、输出与退出码；',
-        '3. 逐项给出 pass / fail / uncertain 与证据；无法验证的项标 uncertain，禁止猜 pass；',
-        `4. 把验收报告写入 ${reportPath}，并在会话中给出结论与关键证据。`,
-      ].join('\n')
+      brief = prompts.render('acceptanceFallback', { projectDir: dir, goal: goal || '未提供，请按项目现状判断', reportPath })
     }
     return { sessionId, workspaceTitle: path.basename(dir), title, brief, reportPath, sent: false }
   }
@@ -2098,10 +1969,10 @@ export function apply(ctx, config = {}) {
           projectName: text(payload.projectName).trim(),
           projectDir,
           goal,
-        }),
+        }, prompts.render),
         cwd,
         schema: BRIEF_SCHEMA,
-        systemPrompt: COMMANDER_SYSTEM,
+        systemPrompt: prompts.render('commanderSystem'),
         permissionMode,
         model: settings.model,
         timeoutMs: settings.timeoutMs,
@@ -2122,17 +1993,17 @@ export function apply(ctx, config = {}) {
         goal: text(payload.goal).trim(),
         brief,
         answer,
-      }),
+      }, prompts.render),
       cwd,
       schema: REFINE_SCHEMA,
-      systemPrompt: COMMANDER_SYSTEM,
+      systemPrompt: prompts.render('commanderSystem'),
       permissionMode,
       model: settings.model,
       timeoutMs: settings.timeoutMs,
       proxy,
       label: 'refine',
       onCancel: setCancel,
-    })
+    }).then((result) => ({ ...result, data: { ...result.data, handoffPrompt: prompts.render('handoff', { title: result.data.projectTitle || text(payload.projectName).trim() || '新项目', body: result.data.dshPrompt || '' }) } }))
   }
 
   async function dispatch(payload) {
@@ -2283,25 +2154,11 @@ export function apply(ctx, config = {}) {
     const systemFile = `${base}-system.txt`
     const promptFile = `${base}-prompt.txt`
     const script = `${base}.ps1`
-    const system = [
-      '你是独立验收员，不参与实现，也不采信执行代理的自我汇报。',
-      '只依据项目文件、git 状态和你实际运行的命令输出做判断。',
-      '每条 pass/fail 必须给出可定位证据（文件路径 + 行号，或命令 + 输出片段）。',
-      '无法验证的项标 uncertain，禁止猜测。',
-    ].join('\n')
-    const prompt = [
-      `请对项目做独立验收：${dir}`,
-      '',
-      `任务背景 / 目标：${goal || '未提供，请按项目现状判断'}`,
-      `验收重点：${focus || '改动是否回应目标、构建/测试/lint 是否通过、是否越权改动无关文件'}`,
-      '',
-      '执行要求：',
-      '1. 阅读项目与 git 状态，列出实际改动文件；',
-      '2. 运行可用的构建/测试/lint，记录真实命令、输出与退出码；',
-      '3. 逐项给出 pass / fail / uncertain 与证据；无法验证的项必须标 uncertain；',
-      '4. 把验收报告写入下面的 Markdown 文件，并在终端打印结论与关键证据：',
-      `   ${reportPath}`,
-    ].join('\n')
+    const system = prompts.value('terminalSystem')
+    const prompt = prompts.render('terminalReview', {
+      projectDir: dir, goal: goal || '未提供，请按项目现状判断',
+      focus: focus || '改动是否回应目标、构建/测试/lint 是否通过、是否越权改动无关文件', reportPath,
+    })
     await writeFile(systemFile, system, 'utf8')
     await writeFile(promptFile, prompt, 'utf8')
     const quote = (value) => `'${String(value).replace(/'/g, "''")}'`
@@ -2445,6 +2302,22 @@ export function apply(ctx, config = {}) {
 
   const routes = [
     {
+      path: '/prompts',
+      methods: ['GET', 'POST'],
+      handler: endpoint(async (request) => {
+        if (request.method === 'GET') return json({ items: prompts.list() })
+        return json({ items: await prompts.save(await readBody(request)) })
+      }),
+    },
+    {
+      path: '/prompts/handoff',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        return json({ content: prompts.render('handoff', { title: text(body.title).trim() || '新项目', body: text(body.body) }) })
+      }),
+    },
+    {
       path: '/detect',
       methods: ['GET'],
       handler: endpoint(async () => json(await detect())),
@@ -2569,7 +2442,7 @@ export function apply(ctx, config = {}) {
           projectName: text(body.projectName),
           projectDir: text(body.projectDir),
           goal: text(body.goal),
-        })
+        }, prompts.render)
         return json({ prompt })
       }),
     },
@@ -2694,15 +2567,7 @@ export function apply(ctx, config = {}) {
           required: ['title', 'brief'],
           additionalProperties: false,
         }
-        const prompt = [
-          '你是验收指挥。请为下面的项目写一份交给 DSH 执行代理的验收任务书。',
-          `项目目录：${dir}`,
-          `任务背景：${goal || '未提供，请按项目现状验收'}`,
-          '要求 DSH：实际读取项目与 git 状态；运行可用的构建/测试/lint 并记录真实输出；',
-          '逐项给出 pass / fail / uncertain 与证据；无法验证的项标 uncertain，禁止猜 pass；',
-          `把报告写入 ${reportPath}，并在会话中给出结论。`,
-          'brief 必须自包含、可直接执行，不要依赖追问；输出 JSON { title, brief }。',
-        ].join('\n')
+        const prompt = prompts.render('acceptanceBrief', { projectDir: dir, goal: goal || '未提供，请按项目现状验收', reportPath })
         let brief = ''
         let title = ''
         if (executable) {
@@ -2724,17 +2589,7 @@ export function apply(ctx, config = {}) {
         }
         if (!brief) {
           title = `验收：${titleBase}`
-          brief = [
-            `请对项目做独立验收：${dir}`,
-            '',
-            `任务背景：${goal || '未提供，请按项目现状判断'}`,
-            '',
-            '要求：',
-            '1. 读取项目与 git 状态，列出实际改动文件；',
-            '2. 运行可用的构建/测试/lint，记录真实命令、输出与退出码；',
-            '3. 逐项给出 pass / fail / uncertain 与证据；无法验证的项标 uncertain，禁止猜 pass；',
-            `4. 把验收报告写入 ${reportPath}，并在会话中给出结论与关键证据。`,
-          ].join('\n')
+          brief = prompts.render('acceptanceFallback', { projectDir: dir, goal: goal || '未提供，请按项目现状判断', reportPath })
         }
         // Acceptance belongs to the ORIGINAL DSH conversation. Show the
         // generated brief for editing first; sending is a separate action.
@@ -2928,6 +2783,7 @@ export function apply(ctx, config = {}) {
           projectName,
           projectDir,
           goal: url.searchParams.get('goal') || '',
+          rules: prompts.value('devdocRules'),
         })
         return json({
           filename: `${text(projectName).trim() || '项目'}-开发文档模板.md`,
