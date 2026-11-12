@@ -23,9 +23,9 @@
 
 | 判据 | 来源 | 结论 |
 |---|---|---|
-| 任务目标 | `sessionController.inspect(sessionId).events` 中第一条 `user/message` 且 `data.source.kind === 'user'` | **可取**（跳过 `user-approval`、runtime context、system-reminder） |
-| 事件流 | `sessionController.inspect(sessionId)`（Host，持久化读取）或 Session 日志文件（CLI） | **可取** |
-| workspace 绝对路径 | `inspect().meta.cwd`（`SessionHeader.cwd`） | **可取** |
+| 任务目标 | 会话事件流中第一条 `user/message` 且 `data.source.kind === 'user'` | **可取**（跳过 `user-approval`、runtime context、system-reminder） |
+| 事件流 | Host 会话读取（内存会话、Controller 分页或落盘日志）或 Session 日志文件（CLI） | **可取** |
+| workspace 绝对路径 | 会话 header 的 `cwd`（`SessionHeader.cwd`） | **可取** |
 | 改动文件 | `git status --porcelain=v1 --untracked-files=all` + `git diff --name-status HEAD` + tool `write`/`edit` 的 `file_path` | **部分可取**：git 只覆盖 workspace；workspace 外的写入只能从工具调用参数取证 |
 | 命令与输出 | `tool/call`（`pwsh`/`bash`）配对 `tool/result.message.content` + `isError` | **可取**；输出为空时按规则判 uncertain |
 | 结束状态 | 最后一个 `turn/end.data.reason.kind` | **可取** |

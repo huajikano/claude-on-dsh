@@ -22,6 +22,7 @@ import { attachReviewPrompt } from './lib/acceptance/review.js'
 import { executeAcceptance } from './lib/acceptance/kernel.js'
 import { extractTask, buildFacts, recentConversation } from './lib/acceptance/facts.js'
 import { createJobs } from './lib/jobs.js'
+import { readSession } from './lib/session-read.js'
 import { latestForkSessions } from './lib/sessions.js'
 import { createPromptStore, renderPrompt } from './lib/prompts.js'
 import {
@@ -1161,7 +1162,7 @@ export function apply(ctx, config = {}) {
   if (legacyGate) acceptance.setAuto(acceptanceSettings.autoAcceptance)
 
   async function runManualAcceptance(sessionId, opinion = '', onCancel) {
-    const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(60_000))
+    const inspected = await readSession(ctx, sessionId, AbortSignal.timeout(60_000))
     const workspace = inspected.meta && inspected.meta.cwd
     if (!workspace) throw userError('会话缺少 workspace，无法验收', '', 400)
     if (!isDir(workspace)) {
@@ -1393,7 +1394,7 @@ export function apply(ctx, config = {}) {
 
     if (sessionId) {
       if (!ACCEPTANCE_ID.test(sessionId)) throw userError('会话 ID 无效', '', 400)
-      const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(60_000))
+      const inspected = await readSession(ctx, sessionId, AbortSignal.timeout(60_000))
       const cwd = inspected.meta && inspected.meta.cwd
       if (!cwd || projectKey(cwd) !== projectKey(dir)) {
         throw userError('目标会话不属于当前项目', '请选择同一项目目录下的会话。', 400)
@@ -1465,7 +1466,7 @@ export function apply(ctx, config = {}) {
   })
 
   async function runFirstQuestion(sessionId, requirement, onCancel) {
-    const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(60_000))
+    const inspected = await readSession(ctx, sessionId, AbortSignal.timeout(60_000))
     const workspace = inspected.meta && inspected.meta.cwd
     if (!workspace) throw userError('会话缺少 workspace，无法读取项目', '', 400)
     if (!isDir(workspace)) {
@@ -1633,7 +1634,7 @@ export function apply(ctx, config = {}) {
     let workspace = expand(projectDir)
     if (!isDir(workspace)) {
       try {
-        const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(20_000))
+        const inspected = await readSession(ctx, sessionId, AbortSignal.timeout(20_000))
         workspace = inspected.meta && inspected.meta.cwd ? inspected.meta.cwd : ''
       } catch {
         workspace = ''
@@ -1874,7 +1875,7 @@ export function apply(ctx, config = {}) {
     }
     let goal = text(body.goal).trim()
     try {
-      const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(20_000))
+      const inspected = await readSession(ctx, sessionId, AbortSignal.timeout(20_000))
       const task = extractTask(inspected.events)
       if (task.summary) goal = task.summary
     } catch {}
@@ -2505,7 +2506,7 @@ export function apply(ctx, config = {}) {
             goal = disk.report.task.summary
           } else {
             try {
-              const inspected = await ctx.sessionController.inspect(
+              const inspected = await readSession(ctx, 
                 sessionId,
                 AbortSignal.timeout(20_000),
               )
@@ -2550,7 +2551,7 @@ export function apply(ctx, config = {}) {
             goal = payload.report.task.summary
           } else {
             try {
-              const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(20_000))
+              const inspected = await readSession(ctx, sessionId, AbortSignal.timeout(20_000))
               const task = extractTask(inspected.events)
               if (task.summary) goal = task.summary
             } catch {}

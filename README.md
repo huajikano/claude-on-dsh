@@ -1,4 +1,4 @@
-﻿# Claude on DSH
+# Claude on DSH
 
 一个 DSH 侧栏插件：让**本机 Claude Code CLI** 或 **Claude 桌面版**负责新项目的首个提问与规划，然后把完整任务交接给 **DSH** 执行。
 
