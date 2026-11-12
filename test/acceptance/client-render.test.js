@@ -26,11 +26,15 @@ globalThis.document = {
 const source = await readFile(new URL('../../client.js', import.meta.url), 'utf8')
 await import('../../client.js')
 
+const components = new Map()
 const FakeFragment = Symbol('Fragment')
 function createElement(type, props, ...children) {
   if (type === FakeFragment) return children
   const merged = { ...(props || {}), children }
-  if (typeof type === 'function') return type(merged)
+  if (typeof type === 'function') {
+    components.set(type.name, { type, props: merged })
+    return type(merged)
+  }
   return { type, props: merged }
 }
 const React = {
@@ -134,8 +138,58 @@ test('every tt() key exists in both dictionaries', () => {
 test('setup phase renders', () => {
   const tree = render(null)
   assert.ok(contains(tree, '从一个目标开始'))
-  assert.ok(contains(tree, '选择会话'))
-  assert.ok(contains(tree, '项目设定'))
+  assert.ok(contains(tree, '继续会话'))
+  assert.ok(contains(tree, '项目目录'))
+  assert.ok(contains(tree, '项目名称'))
+})
+
+function findNodes(node, predicate) {
+  if (!node || typeof node !== 'object') return []
+  if (Array.isArray(node)) return node.flatMap((child) => findNodes(child, predicate))
+  return [
+    ...(predicate(node) ? [node] : []),
+    ...findNodes(node.props?.children, predicate),
+  ]
+}
+
+function renderPicker(sessions, query = '', onSelect = () => {}) {
+  render({ v: 1, savedAt: Date.now(), activeWorkspace: 'continue' })
+  const picker = components.get('SessionPicker')
+  assert.ok(picker, 'continue workspace renders the session picker')
+  return createElement(picker.type, { ...picker.props, sessions, query, onSelect })
+}
+
+test('continue picker distinguishes sessions in one workspace by title and keeps directory context', () => {
+  const cwd = 'D:\\new\\new2'
+  const sessions = [
+    { sessionId: 'session-first', title: '项目调研与优化准备', cwd },
+    { sessionId: 'session-second', title: 'CC-dsh', cwd },
+    { sessionId: 'session-third', title: '   ', cwd },
+    { sessionId: 'session-fourth', cwd: '' },
+  ]
+  let selected
+  const tree = renderPicker(sessions, '', (item) => { selected = item })
+  const buttons = findNodes(tree, (node) => node.props?.className === 'cc-sessionPick')
+  assert.equal(buttons.length, 4)
+  const titles = buttons.map((button) => findNodes(button, (node) => node.props?.className === 'cc-recordTitle')[0].props.children[0])
+  assert.deepEqual(titles, ['项目调研与优化准备', 'CC-dsh', 'new2', 'session-fourth'])
+  assert.ok(contains(buttons[0], cwd))
+  buttons[1].props.onClick()
+  assert.equal(selected, sessions[1])
+})
+
+test('continue picker searches session title, directory and id', () => {
+  const sessions = [
+    { sessionId: 'session-first', title: '项目调研与优化准备', cwd: 'D:\\new\\new2' },
+    { sessionId: 'session-second', title: 'CC-dsh', cwd: 'D:\\other' },
+  ]
+  for (const query of [' 优化 ', 'new2', 'FIRST']) {
+    const tree = renderPicker(sessions, query)
+    const buttons = findNodes(tree, (node) => node.props?.className === 'cc-sessionPick')
+    assert.equal(buttons.length, 1)
+    assert.ok(contains(buttons[0], '项目调研与优化准备'))
+  }
+  assert.equal(findNodes(renderPicker(sessions, 'missing'), (node) => node.props?.className === 'cc-sessionPick').length, 0)
 })
 
 test('refined phase focuses on the handoff and folds the setup away', () => {

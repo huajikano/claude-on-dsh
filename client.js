@@ -943,6 +943,36 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function sessionLabel(item) {
+      return String(item?.title || '').trim()
+        || String(item?.cwd || '').split(/[\\/]/).filter(Boolean).pop()
+        || item?.sessionId || ''
+    }
+
+    function SessionPicker({ sessions, query, onQueryChange, onSelect, tt }) {
+      const search = query.trim().toLowerCase()
+      const items = sessions.filter((item) => !search
+        || `${item.title || ''} ${item.cwd || ''} ${item.sessionId}`.toLowerCase().includes(search)).slice(0, 80)
+      return h(
+        'section',
+        { className: 'cc-card cc-sessionWorkspace' },
+        h('div', { className: 'cc-cardTitle' }, tt('workspaceContinue')),
+        h('input', {
+          className: 'cc-input', type: 'search', value: query, placeholder: tt('sessionSearch'),
+          onChange: (event) => onQueryChange(event.target.value),
+        }),
+        h('div', { className: 'cc-sessionPicker' }, items.map((item) => h(
+          'button',
+          { type: 'button', key: item.sessionId, className: 'cc-sessionPick', onClick: () => onSelect(item) },
+          h('span', { className: 'cc-sessionPickInfo' },
+            h('span', { className: 'cc-recordTitle', title: sessionLabel(item) }, sessionLabel(item)),
+            item.cwd ? h('span', { className: 'cc-sessionPickPath', title: item.cwd }, item.cwd) : null,
+          ),
+          h('span', { className: 'cc-sessionPickerMeta' }, `${item.running ? tt('sessionRunning') : timeAgo(item.updatedAt, tt)} · ${item.sessionId.slice(-6)}`),
+        ))),
+      )
+    }
+
     function CommanderPanel(props) {
       const {
         panelId,
@@ -2093,10 +2123,7 @@ window.__ModuleLoader__.load({
         openFirstQuestionDialog({
           sessionId: target,
           projectDir: item && item.cwd,
-          title:
-            item && item.cwd
-              ? String(item.cwd).split(/[\\/]/).filter(Boolean).pop()
-              : target,
+          title: sessionLabel(item) || target,
         })
       }
 
@@ -2809,24 +2836,13 @@ window.__ModuleLoader__.load({
       if (activeWorkspace === 'devdoc') {
         main = h('div', { className: 'cc-devDocWorkspace' }, renderDevDocView())
       } else if (activeWorkspace === 'continue' && !firstQuestion) {
-        main = h(
-          'section',
-          { className: 'cc-card cc-sessionWorkspace' },
-          h('div', { className: 'cc-cardTitle' }, tt('workspaceContinue')),
-          h('input', {
-            className: 'cc-input', type: 'search', value: sessionSearch, placeholder: tt('sessionSearch'),
-            onChange: (event) => setSessionSearch(event.target.value),
-          }),
-          h('div', { className: 'cc-sessionPicker' }, sortedSessions.filter((item) => {
-            const query = sessionSearch.trim().toLowerCase()
-            return !query || `${item.title || ''} ${item.cwd || ''} ${item.sessionId}`.toLowerCase().includes(query)
-          }).slice(0, 80).map((item) => h(
-            'button',
-            { type: 'button', key: item.sessionId, className: 'cc-sessionPick', onClick: () => openFirstQuestionDialog({ sessionId: item.sessionId, projectDir: item.cwd, title: (item.cwd || '').split(/[\\/]/).filter(Boolean).pop() || item.sessionId }) },
-            h('span', { className: 'cc-recordTitle' }, (item.cwd || '').split(/[\\/]/).filter(Boolean).pop() || item.cwd || item.sessionId),
-            h('span', { className: 'cc-sessionPickerMeta' }, `${item.running ? tt('sessionRunning') : timeAgo(item.updatedAt, tt)} · ${item.sessionId.slice(-6)}`),
-          ))),
-        )
+        main = h(SessionPicker, {
+          sessions: sortedSessions,
+          query: sessionSearch,
+          onQueryChange: setSessionSearch,
+          onSelect: (item) => openFirstQuestionDialog({ sessionId: item.sessionId, projectDir: item.cwd, title: sessionLabel(item) }),
+          tt,
+        })
       } else if (phase === 'dispatched') {
         main = rightCard
       } else if (phase === 'refined') {
@@ -3147,10 +3163,7 @@ window.__ModuleLoader__.load({
                                 entry: {
                                   sessionId: selected.sessionId,
                                   projectDir: selected.cwd,
-                                  title: String(selected.cwd)
-                                    .split(/[\\/]/)
-                                    .filter(Boolean)
-                                    .pop(),
+                                  title: sessionLabel(selected),
                                 },
                                 generated: null,
                                 answer: '',
@@ -3176,7 +3189,7 @@ window.__ModuleLoader__.load({
                     sortedSessions.map((item) => {
                       const label = [
                         item.sessionId === activeSessionId ? `[${tt('currentSession')}]` : '',
-                        (item.cwd || '').split(/[\\/]/).filter(Boolean).pop() || item.cwd,
+                        sessionLabel(item),
                         item.running ? tt('sessionRunning') : timeAgo(item.updatedAt, tt),
                         item.sessionId.slice(-6),
                       ]
@@ -4358,8 +4371,10 @@ window.__ModuleLoader__.load({
 .cc-backgroundJob > span { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cc-sessionWorkspace { max-inline-size: none; }
 .cc-sessionPicker { display: flex; flex-direction: column; gap: 5px; max-block-size: 56vh; overflow: auto; }
-.cc-sessionPick { display: flex; align-items: baseline; gap: 10px; inline-size: 100%; padding: 9px 10px; border: 1px solid #e6ded1; border-radius: 8px; background: #fffdf8; color: #2f2a25; text-align: start; font: inherit; cursor: pointer; }
+.cc-sessionPick { display: flex; align-items: center; gap: 10px; inline-size: 100%; padding: 9px 10px; border: 1px solid #e6ded1; border-radius: 8px; background: #fffdf8; color: #2f2a25; text-align: start; font: inherit; cursor: pointer; }
 .cc-sessionPick:hover { border-color: #d97757; background: #fdf3eb; }
+.cc-sessionPickInfo { display: flex; flex-direction: column; gap: 3px; min-inline-size: 0; }
+.cc-sessionPickPath { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #6f6a63; font-size: 10.5px; }
 .cc-sessionPickerMeta { margin-inline-start: auto; color: #6f6a63; font-size: 10.5px; white-space: nowrap; }
 .cc-devDocWorkspace { inline-size: 100%; }
 .cc-settingsSummary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; list-style: none; cursor: pointer; }

@@ -2825,6 +2825,7 @@ export function apply(ctx, config = {}) {
           .filter((item) => item.cwd && !item.origin && !item.blank)
           .map((item) => ({
             sessionId: item.sessionId,
+            title: text(item.projections?.values?.title).trim() || text(item.title).trim(),
             cwd: item.cwd,
             updatedAt: item.updatedAt,
             running: Boolean(item.running),

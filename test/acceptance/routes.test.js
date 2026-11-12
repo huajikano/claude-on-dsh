@@ -206,6 +206,37 @@ test('first-question handoff forwards the requirement and records the session', 
   })
 })
 
+test('session list preserves session titles from host projections and direct summaries', async () => {
+  await withIsolatedEnv(async () => {
+    const harness = createHarness(os.tmpdir())
+    const cwd = 'D:\\new\\new2'
+    harness.ctx.sessionController.list = async (_request, signal) => {
+      assert.ok(signal instanceof AbortSignal)
+      return { items: [
+        { sessionId: 'session-one', cwd, updatedAt: 2, projections: { values: { title: ' 项目调研与优化准备 ' } }, title: 'old title', running: true },
+        { sessionId: 'session-two', cwd, updatedAt: 1, projections: { values: { title: 'CC-dsh' } } },
+        { sessionId: 'session-direct', cwd, title: 'Direct title' },
+        { sessionId: 'session-fallback', cwd, projections: { values: { title: ' ' } }, title: 'Fallback title' },
+        { sessionId: 'session-untitled', cwd, projections: { values: { title: { unexpected: true } } } },
+        { sessionId: 'session-child', cwd, origin: 'subagent' },
+        { sessionId: 'session-blank', cwd, blank: true },
+      ] }
+    }
+    apply(harness.ctx, {})
+    const result = await harness.invoke('GET', '/sessions')
+    assert.equal(result.status, 200)
+    assert.deepEqual(result.data.items.map(({ sessionId, title }) => ({ sessionId, title })), [
+      { sessionId: 'session-one', title: '项目调研与优化准备' },
+      { sessionId: 'session-two', title: 'CC-dsh' },
+      { sessionId: 'session-direct', title: 'Direct title' },
+      { sessionId: 'session-fallback', title: 'Fallback title' },
+      { sessionId: 'session-untitled', title: '' },
+    ])
+    assert.equal(result.data.items[0].cwd, cwd)
+    assert.equal(result.data.items[0].running, true)
+  })
+})
+
 test('configured model is reported by /detect', async () => {
   await withIsolatedEnv(async () => {
     const harness = createHarness(os.tmpdir())
