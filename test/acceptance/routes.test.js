@@ -237,6 +237,27 @@ test('session list preserves session titles from host projections and direct sum
   })
 })
 
+test('session picker API collapses ordinary fork chains and retains independent conversations', async () => {
+  await withIsolatedEnv(async () => {
+    const harness = createHarness(os.tmpdir())
+    const cwd = 'D:\\artra'
+    harness.ctx.sessionController.list = async () => ({ items: [
+      { sessionId: 'session-root', cwd, updatedAt: 100, title: 'same title' },
+      { sessionId: 'session-middle', parentSessionId: 'session-root', cwd, updatedAt: 2, title: 'same title' },
+      { sessionId: 'session-latest', parentSessionId: 'session-middle', cwd, updatedAt: 3, projections: { values: { title: 'Latest continuation' } } },
+      { sessionId: 'session-independent', cwd, updatedAt: 4, title: 'same title' },
+      { sessionId: 'session-agent', parentSessionId: 'session-latest', origin: 'subagent', cwd, updatedAt: 5 },
+    ] })
+    apply(harness.ctx, {})
+    const result = await harness.invoke('GET', '/sessions')
+    assert.equal(result.status, 200)
+    assert.deepEqual(result.data.items.map((item) => item.sessionId), ['session-independent', 'session-latest'])
+    assert.equal(result.data.items[1].title, 'Latest continuation')
+    assert.deepEqual(result.data.items[1].forkSessionIds, ['session-latest', 'session-middle', 'session-root'])
+    assert.equal(harness.calls.inspections, 0, 'listing needs summary metadata only')
+  })
+})
+
 test('configured model is reported by /detect', async () => {
   await withIsolatedEnv(async () => {
     const harness = createHarness(os.tmpdir())

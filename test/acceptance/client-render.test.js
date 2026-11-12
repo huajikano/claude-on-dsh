@@ -27,6 +27,8 @@ const source = await readFile(new URL('../../client.js', import.meta.url), 'utf8
 await import('../../client.js')
 
 const components = new Map()
+let hookState = null
+let hookIndex = 0
 const FakeFragment = Symbol('Fragment')
 function createElement(type, props, ...children) {
   if (type === FakeFragment) return children
@@ -44,7 +46,13 @@ const React = {
   useEffect: () => {},
   useMemo: (fn) => fn(),
   useRef: (value) => ({ current: value }),
-  useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
+  useState(initial) {
+    if (!hookState) return [typeof initial === 'function' ? initial() : initial, () => {}]
+    const state = hookState
+    const index = hookIndex++
+    if (!(index in state)) state[index] = typeof initial === 'function' ? initial() : initial
+    return [state[index], (value) => { state[index] = typeof value === 'function' ? value(state[index]) : value }]
+  },
 }
 
 const module = globalThis.__capturedModule.factory((name) => {
@@ -190,6 +198,37 @@ test('continue picker searches session title, directory and id', () => {
     assert.ok(contains(buttons[0], '项目调研与优化准备'))
   }
   assert.equal(findNodes(renderPicker(sessions, 'missing'), (node) => node.props?.className === 'cc-sessionPick').length, 0)
+})
+
+test('a current ancestor resolves to the latest fork when opening the first-question picker', async () => {
+  const latest = { sessionId: 'session-latest', title: 'Latest continuation', cwd: 'D:\\artra', forkSessionIds: ['session-root', 'session-latest'] }
+  const ancestor = { sessionId: 'session-root', title: 'Earlier segment', cwd: latest.cwd }
+  let listCalls = 0
+  const listSessions = async () => ({ items: [++listCalls === 1 ? ancestor : latest] })
+  const state = []
+  const renderState = () => {
+    hookState = state
+    hookIndex = 0
+    snapshot = null
+    try {
+      return panel({ ...props, listSessions, currentSessionId: () => 'session-root' })
+    } finally { hookState = null }
+  }
+  let tree = renderState()
+  const continueTab = findNodes(tree, (node) => node.props?.role === 'tab' && contains(node, '继续会话'))[0]
+  continueTab.props.onClick()
+  await Promise.resolve()
+  tree = renderState()
+  const button = findNodes(tree, (node) => node.props?.className === 'cc-sessionPick')[0]
+  assert.ok(contains(button, 'Earlier segment'))
+  button.props.onClick()
+  await Promise.resolve()
+  tree = renderState()
+  const select = findNodes(tree, (node) => node.type === 'select' && node.props.value === 'session-latest')[0]
+  assert.ok(select, 'first-question picker selects the latest fork')
+  const options = findNodes(select, (node) => node.type === 'option')
+  assert.equal(options.some((node) => node.props.value === 'session-root'), false)
+  assert.ok(contains(select, '[当前]'))
 })
 
 test('refined phase focuses on the handoff and folds the setup away', () => {

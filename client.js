@@ -949,6 +949,11 @@ window.__ModuleLoader__.load({
         || item?.sessionId || ''
     }
 
+    function selectableSession(sessions, sessionId) {
+      return sessions.find((item) => item.sessionId === sessionId
+        || item.forkSessionIds?.includes(sessionId))
+    }
+
     function SessionPicker({ sessions, query, onQueryChange, onSelect, tt }) {
       const search = query.trim().toLowerCase()
       const items = sessions.filter((item) => !search
@@ -2118,8 +2123,8 @@ window.__ModuleLoader__.load({
           current =
             typeof currentSessionId === 'function' ? currentSessionId() : currentSessionId || ''
         } catch {}
-        const target = current || (sortedSessions[0] && sortedSessions[0].sessionId) || ''
-        const item = sortedSessions.find((session) => session.sessionId === target)
+        const item = selectableSession(sortedSessions, current) || (!current ? sortedSessions[0] : null)
+        const target = item?.sessionId || current || ''
         openFirstQuestionDialog({
           sessionId: target,
           projectDir: item && item.cwd,
@@ -2128,7 +2133,10 @@ window.__ModuleLoader__.load({
       }
 
       function openFirstQuestionDialog(entry) {
-        const target = entry || { sessionId: '', projectDir: '', title: '' }
+        const latest = selectableSession(sortedSessions, entry?.sessionId)
+        const target = latest
+          ? { sessionId: latest.sessionId, projectDir: latest.cwd, title: sessionLabel(latest) }
+          : entry || { sessionId: '', projectDir: '', title: '' }
         setFirstQuestion({
           entry: target,
           requirement: '',
@@ -2143,7 +2151,16 @@ window.__ModuleLoader__.load({
         // The picker should offer the conversations that exist now, not the
         // snapshot taken when the panel first mounted.
         listSessions()
-          .then((data) => setAllSessions(Array.isArray(data && data.items) ? data.items : []))
+          .then((data) => {
+            const items = Array.isArray(data && data.items) ? data.items : []
+            setAllSessions(items)
+            const latest = selectableSession(items, target.sessionId)
+            if (!latest || latest.sessionId === target.sessionId) return
+            setFirstQuestion((current) => current && current.entry.sessionId === target.sessionId
+              && !current.busy && !current.generated
+              ? { ...current, entry: { sessionId: latest.sessionId, projectDir: latest.cwd, title: sessionLabel(latest) } }
+              : current)
+          })
           .catch(() => {})
       }
 
@@ -3188,7 +3205,7 @@ window.__ModuleLoader__.load({
                         ),
                     sortedSessions.map((item) => {
                       const label = [
-                        item.sessionId === activeSessionId ? `[${tt('currentSession')}]` : '',
+                        (item.sessionId === activeSessionId || item.forkSessionIds?.includes(activeSessionId)) ? `[${tt('currentSession')}]` : '',
                         sessionLabel(item),
                         item.running ? tt('sessionRunning') : timeAgo(item.updatedAt, tt),
                         item.sessionId.slice(-6),

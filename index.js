@@ -22,6 +22,7 @@ import { attachReviewPrompt } from './lib/acceptance/review.js'
 import { executeAcceptance } from './lib/acceptance/kernel.js'
 import { extractTask, buildFacts, recentConversation } from './lib/acceptance/facts.js'
 import { createJobs } from './lib/jobs.js'
+import { latestForkSessions } from './lib/sessions.js'
 import {
   devDocTemplate, analyzeDevDocInput,
   buildDevDocReviewPrompt, DEV_DOC_SCHEMA, normalizeDevDoc,
@@ -2821,11 +2822,11 @@ export function apply(ctx, config = {}) {
       methods: ['GET'],
       handler: endpoint(async () => {
         const result = await ctx.sessionController.list({}, AbortSignal.timeout(20_000))
-        const items = (result.items || [])
-          .filter((item) => item.cwd && !item.origin && !item.blank)
+        const items = latestForkSessions(result.items || [])
           .map((item) => ({
             sessionId: item.sessionId,
             title: text(item.projections?.values?.title).trim() || text(item.title).trim(),
+            forkSessionIds: item.forkSessionIds,
             cwd: item.cwd,
             updatedAt: item.updatedAt,
             running: Boolean(item.running),
