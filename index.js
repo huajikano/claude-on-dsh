@@ -1161,6 +1161,56 @@ export function apply(ctx, config = {}) {
 
   if (legacyGate) acceptance.setAuto(acceptanceSettings.autoAcceptance)
 
+  /**
+   * The presets a new Session may start in. Absent on hosts without a preset
+   * registry, where the panel simply offers no choice and DSH keeps its default.
+   */
+  async function availableAgentPresets() {
+    let service = null
+    try {
+      service = typeof ctx.get === 'function' ? ctx.get('agentPresets') : null
+    } catch {
+      service = null
+    }
+    if (!service || typeof service.list !== 'function') return []
+    let rows = []
+    try {
+      rows = await service.list()
+    } catch (error) {
+      ctx.logger?.warn?.(`[claude-on-dsh] 无法读取 DSH 预设：${messageOf(error)}`)
+      return []
+    }
+    const seen = new Set()
+    const items = []
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const id = text(row && row.id).trim()
+      if (!id || seen.has(id) || text(row && row.broken).trim()) continue
+      seen.add(id)
+      items.push({
+        id,
+        name: text(row.name).trim() || id,
+        description: text(row.description).trim(),
+        isDefault: Boolean(row.isDefault),
+      })
+    }
+    // The default belongs first; the rest stay in registry order.
+    return items.sort((left, right) => Number(right.isDefault) - Number(left.isDefault))
+  }
+
+  /** Empty means "let DSH apply its own default", which is not an error. */
+  async function resolveAgentPreset(requested) {
+    const wanted = text(requested).trim()
+    if (!wanted) return ''
+    const items = await availableAgentPresets()
+    if (items.length === 0) return ''
+    if (items.some((item) => item.id === wanted)) return wanted
+    throw userError(
+      'DSH 会话模式不存在',
+      `请重新选择；当前可选：${items.map((item) => item.name).join('、')}`,
+      400,
+    )
+  }
+
   async function runManualAcceptance(sessionId, opinion = '', onCancel) {
     const inspected = await readSession(ctx, sessionId, AbortSignal.timeout(60_000))
     const workspace = inspected.meta && inspected.meta.cwd
@@ -1374,7 +1424,7 @@ export function apply(ctx, config = {}) {
     return doc
   }
 
-  async function sendDevDoc({ projectDir, sessionId, confirmedHash }) {
+  async function sendDevDoc({ projectDir, sessionId, confirmedHash, agentPreset }) {
     const dir = expand(projectDir)
     if (!dir || !isDir(dir)) throw userError('项目目录不存在', '请先选择已存在的项目目录。', 400)
     const doc = await readDevDoc(dir)
@@ -1431,6 +1481,7 @@ export function apply(ctx, config = {}) {
       title: doc.title,
       brief,
       engine: 'cli',
+      agentPreset,
     })
     await writeContentRecord({
       kind: 'devdoc',
@@ -1446,6 +1497,7 @@ export function apply(ctx, config = {}) {
       workspaceTitle: dispatched.workspaceTitle,
       permission: dispatched.permission,
       permissionWarning: dispatched.permissionWarning,
+      agentPreset: dispatched.agentPreset || '',
       existing: false,
       projectDir: dir,
     }
@@ -2016,12 +2068,17 @@ export function apply(ctx, config = {}) {
     const brief = text(payload.brief).trim()
     if (brief.length === 0) throw userError('交接任务为空', '请先生成或粘贴交接书。', 400)
 
+    const agentPreset = await resolveAgentPreset(payload.agentPreset)
     const title = text(payload.title).trim() || path.basename(projectDir)
     const workspace = await ctx.workspaceRegistry.create(projectDir, title)
     // The Session Controller accepts either a Workspace id or a cwd, never both:
     // the Workspace already owns the canonical project directory, so naming it
-    // is what fixes the new Session's cwd.
-    const created = await ctx.sessionController.create({ workspaceId: workspace.id })
+    // is what fixes the new Session's cwd. `agentPreset` picks the composition
+    // the new Session starts in; omitting it keeps DSH's own default.
+    const created = await ctx.sessionController.create({
+      workspaceId: workspace.id,
+      ...(agentPreset ? { agentPreset } : {}),
+    })
 
     // `create` returns a live Session, but resolve the Agent explicitly so the
     // permission knobs and the prompt both address the activated Session.
@@ -2104,6 +2161,7 @@ export function apply(ctx, config = {}) {
       costUsd: typeof payload.costUsd === 'number' ? payload.costUsd : null,
       durationMs: typeof payload.durationMs === 'number' ? payload.durationMs : null,
       permission,
+      agentPreset: agentPreset || created.agentPreset || '',
     }
     try {
       await appendHistory(record)
@@ -2116,6 +2174,7 @@ export function apply(ctx, config = {}) {
       workspaceTitle: workspace.title,
       permission,
       permissionWarning,
+      agentPreset: record.agentPreset,
       record,
     }
   }
@@ -2385,6 +2444,11 @@ export function apply(ctx, config = {}) {
         if (!result.ok) throw userError(result.reason === 'not-found' ? '任务不存在' : '任务仍在运行', '', result.reason === 'not-found' ? 404 : 409)
         return json({ job: serialize(result.job) })
       }),
+    },
+    {
+      path: '/presets',
+      methods: ['GET'],
+      handler: endpoint(async () => json({ items: await availableAgentPresets() })),
     },
     {
       path: '/dispatch',
@@ -2816,6 +2880,7 @@ export function apply(ctx, config = {}) {
           projectDir: body.projectDir,
           sessionId: text(body.sessionId).trim(),
           confirmedHash: body.confirmedHash,
+          agentPreset: body.agentPreset,
         })
         return json(result)
       }),

@@ -35,6 +35,8 @@ window.__ModuleLoader__.load({
         stepAsk: 'Claude 首问',
         stepHandoff: '交给 DSH',
         engine: '指挥引擎',
+        agentPresetLabel: 'DSH 新会话模式',
+        agentPresetHint: '选择新会话使用的 DSH 预设；默认项由 DSH 决定。',
         engineCli: 'Claude Code CLI',
         engineCliHint: '自动提问与规划',
         engineDesktop: '桌面版 · 人工接管',
@@ -291,6 +293,8 @@ window.__ModuleLoader__.load({
         stepAsk: 'Claude asks',
         stepHandoff: 'Hand off to DSH',
         engine: 'Commander engine',
+        agentPresetLabel: 'New DSH session mode',
+        agentPresetHint: 'Preset for the new session; the default comes from DSH.',
         engineCli: 'Claude Code CLI',
         engineCliHint: 'Automated question and plan',
         engineDesktop: 'Desktop · manual',
@@ -948,6 +952,7 @@ window.__ModuleLoader__.load({
       projectName: '',
       goal: '',
       permissionMode: 'plan',
+      agentPreset: '',
     }
 
     const STORAGE_KEY = 'claude-on-dsh:snapshot'
@@ -1135,6 +1140,7 @@ window.__ModuleLoader__.load({
       const [dialog, setDialog] = useState(null)
       const [firstQuestion, setFirstQuestion] = useState(null)
       const [allSessions, setAllSessions] = useState([])
+      const [agentPresets, setAgentPresets] = useState([])
       const [sessionSearch, setSessionSearch] = useState('')
       const [activeWorkspace, setActiveWorkspace] = useState(() => (restored ? restored.activeWorkspace || 'new' : 'new'))
       const [recordsOpen, setRecordsOpen] = useState(false)
@@ -1250,12 +1256,14 @@ window.__ModuleLoader__.load({
             sessionsResult,
             claudeSessionsResult,
             usageResult,
+            presetsResult,
           ] = await Promise.allSettled([
             request('/detect'),
             request('/history'),
             listSessions(),
             listClaudeSessions(),
             getUsage(),
+            request('/presets'),
           ])
           if (stopped) return
           if (detectResult.status === 'fulfilled') {
@@ -1276,6 +1284,13 @@ window.__ModuleLoader__.load({
             setAllSessions(
               Array.isArray(sessionsResult.value && sessionsResult.value.items)
                 ? sessionsResult.value.items
+                : [],
+            )
+          }
+          if (presetsResult.status === 'fulfilled') {
+            setAgentPresets(
+              Array.isArray(presetsResult.value && presetsResult.value.items)
+                ? presetsResult.value.items
                 : [],
             )
           }
@@ -1558,6 +1573,7 @@ window.__ModuleLoader__.load({
             title: form.projectName || (refined && refined.projectTitle) || (brief && brief.projectTitle) || '',
             brief: promptText,
             engine: form.engine,
+            agentPreset: form.agentPreset || undefined,
             costUsd: job && job.meta ? job.meta.costUsd : undefined,
             durationMs: job && job.meta ? job.meta.durationMs : undefined,
           })
@@ -1985,6 +2001,7 @@ window.__ModuleLoader__.load({
             projectDir: form.projectDir,
             sessionId: devDocSession,
             confirmedHash: devDoc.approvedHash,
+            agentPreset: form.agentPreset || undefined,
           })
           setToast(
             result.existing ? tt('devDocSentExisting') : tt('devDocSentNew'),
@@ -2134,6 +2151,14 @@ window.__ModuleLoader__.load({
               ),
             ),
           ),
+          devDocSession
+            ? null
+            : h(AgentPresetPicker, {
+                tt,
+                value: form.agentPreset,
+                presets: agentPresets,
+                onChange: (value) => update({ agentPreset: value }),
+              }),
           devDocError
             ? h('div', { className: 'cc-notice' }, h('div', { className: 'cc-noticeBody' }, devDocError))
             : null,
@@ -2795,6 +2820,31 @@ window.__ModuleLoader__.load({
         return Boolean(brief) && phase !== 'desktop' && phase !== 'dispatched'
       }
 
+      function AgentPresetPicker({ tt, value, presets, onChange }) {
+        if (!Array.isArray(presets) || presets.length === 0) return null
+        return h(
+          'label',
+          { className: 'cc-field' },
+          h('span', { className: 'cc-label' }, tt('agentPresetLabel')),
+          h(
+            'select',
+            {
+              className: 'cc-select',
+              value,
+              onChange: (event) => onChange(event.target.value),
+            },
+            presets.map((item) =>
+              h(
+                'option',
+                { value: item.id, key: item.id },
+                item.name + (item.isDefault ? '（默认）' : ''),
+              ),
+            ),
+          ),
+          h('div', { className: 'cc-hint' }, tt('agentPresetHint')),
+        )
+      }
+
       const refinedCard = refined && phase !== 'dispatched'
         ? h(
             'div',
@@ -2861,6 +2911,12 @@ window.__ModuleLoader__.load({
             dispatch.state === 'error'
               ? h(Notice, { notice: { message: dispatch.message, hint: dispatch.hint }, tt })
               : null,
+            h(AgentPresetPicker, {
+              tt,
+              value: form.agentPreset,
+              presets: agentPresets,
+              onChange: (value) => update({ agentPreset: value }),
+            }),
             h(
               'div',
               { className: 'cc-actions' },
