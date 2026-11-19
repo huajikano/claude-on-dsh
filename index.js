@@ -21,6 +21,8 @@ import { attachAcceptance } from './lib/acceptance/host.js'
 import { attachReviewPrompt } from './lib/acceptance/review.js'
 import { executeAcceptance } from './lib/acceptance/kernel.js'
 import { extractTask, buildFacts, recentConversation } from './lib/acceptance/facts.js'
+import { buildSessionPrompt, lastAssistantText, parseSessionAnswer } from './lib/first-question-session.js'
+import { createSdkLoader, normalizeEngine, startSdkRun } from './lib/engine/sdk.js'
 import { createJobs } from './lib/jobs.js'
 import { readSession } from './lib/session-read.js'
 import { latestForkSessions } from './lib/sessions.js'
@@ -61,9 +63,155 @@ const DEFAULTS = {
   permissionPreset: 'danger-full-access',
   model: '',
   timeoutMs: 240_000,
+  engine: 'auto',
+  sdkPath: '',
+  planningDenyTools: null,
+  dispatchAgentPreset: '',
+  dispatchPermissionPreset: 'auto',
+  claudePresetIds: ['claude'],
+  firstQuestionInSession: false,
 }
 
+/** Sentinel for "the Agent SDK runs this call": no native executable is involved. */
+const SDK_SENTINEL = '__agent-sdk__'
+
 const MODES = new Set(['plan', 'dontAsk', 'acceptEdits', 'bypassPermissions', 'auto'])
+
+/**
+ * Tools a planning call may not use, whatever the permission mode says. Every
+ * call this plugin makes is a read: it reads the repository it is planning for,
+ * writes nothing and runs nothing. Plan mode already enforces that on the CLI
+ * side; under the Agent SDK this list is the second lock, so a changed mode or a
+ * relaxed preset cannot quietly turn the planner into an editor.
+ */
+export const DEFAULT_PLANNING_DENY_TOOLS = [
+  'Write',
+  'Edit',
+  'MultiEdit',
+  'NotebookEdit',
+  'Bash',
+  'BashOutput',
+  'KillShell',
+]
+
+/** The deny list a row config asks for: an array wins, anything else is the default. */
+export function planningDenyTools(configured) {
+  if (!Array.isArray(configured)) return DEFAULT_PLANNING_DENY_TOOLS
+  const tools = configured.map((entry) => text(entry).trim()).filter(Boolean)
+  return tools.length > 0 ? tools : DEFAULT_PLANNING_DENY_TOOLS
+}
+
+/**
+ * Whether this plugin may pin the new Session's DSH access preset.
+ *
+ * A dispatched Session runs under some agent preset, and a preset may own its own
+ * permission model. @norman-else/dsh-claude does: its per-session Claude
+ * permission mode moves the DSH sandbox onto the preset that mode needs, and a
+ * later native switch wins over its record. Writing `danger-full-access` after
+ * that would contradict the mode the user picked inside the Claude session, so
+ * `auto` stands down whenever the target is one of `claudePresetIds`.
+ *
+ * `''` always stands down (leave DSH's own default), any other value is taken as
+ * this plugin's preset name and pinned as before.
+ */
+export function shouldPinPermission({ configured = 'auto', agentPreset = '', claudePresetIds = [] } = {}) {
+  const wanted = text(configured).trim()
+  if (wanted === '') return false
+  if (wanted !== 'auto') return true
+  const preset = text(agentPreset).trim()
+  if (!preset) return true
+  return !claudePresetIds.map((id) => text(id).trim()).filter(Boolean).includes(preset)
+}
+
+/** Coerce the id list a row config hands over. */
+export function claudePresetList(configured) {
+  if (!Array.isArray(configured)) return DEFAULTS.claudePresetIds
+  const ids = configured.map((entry) => text(entry).trim()).filter(Boolean)
+  return ids.length > 0 ? ids : DEFAULTS.claudePresetIds
+}
+
+/** Names a Host may register the agent-preset registry under. */
+const PRESET_SERVICE_NAMES = ['agentPresets', 'agentPresetRegistry', 'agentPresetsRegistry']
+
+/**
+ * Coerce whatever the preset registry hands back into one row shape.
+ *
+ * The registry's own reader has changed shape between Host lines (an array of
+ * rows, a map of id → row, a bare id list), and a plugin that only understands
+ * one of them silently offers no presets at all — which is exactly how the
+ * "dispatch into a Claude session" path disappeared. Rows keep only the four
+ * fields the picker shows, plus `isDefault` for ordering.
+ */
+export function normalizePresetRows(value) {
+  const pushed = []
+  const push = (row, key) => {
+    if (typeof row === 'string') {
+      const id = text(row).trim()
+      if (id) pushed.push({ id, name: id, description: '', isDefault: false })
+      return
+    }
+    if (!row || typeof row !== 'object') return
+    if (text(row.broken).trim()) return
+    // The map key is an id when the row's own id is absent — `name` is display
+    // copy and must not become an id (that is how "Code" would shadow "code").
+    const id = text(row.id ?? row.preset ?? row.presetId ?? key ?? row.name).trim()
+    if (!id) return
+    pushed.push({
+      id,
+      name: text(row.name ?? row.title ?? row.label).trim() || id,
+      description: text(row.description ?? row.summary).trim(),
+      isDefault: Boolean(row.isDefault ?? row.default),
+    })
+  }
+  if (Array.isArray(value)) {
+    for (const row of value) push(row)
+  } else if (value instanceof Map) {
+    for (const [key, row] of value) push(row, key)
+  } else if (value && typeof value === 'object') {
+    for (const [key, row] of Object.entries(value)) push(row, key)
+  }
+  const seen = new Set()
+  const items = []
+  for (const row of pushed) {
+    if (seen.has(row.id)) continue
+    seen.add(row.id)
+    items.push(row)
+  }
+  return items.sort((left, right) => Number(right.isDefault) - Number(left.isDefault))
+}
+
+/** Human labels for the timeout message, one per Claude call site. */
+const CLAUDE_LABELS = {
+  plan: '规划',
+  refine: '定稿',
+  'first-question': '首问',
+  'acceptance-brief': '验收任务书',
+  acceptance: '验收判定',
+  review: '验收意见',
+  devdoc: '开发文档预审',
+}
+
+/** The exact user-facing pair for a killed call, kept pure so it is testable. */
+export function claudeTimeoutMessage(label, timeoutMs) {
+  const name = label ? `（${CLAUDE_LABELS[label] || label}）` : ''
+  return {
+    message: `Claude 调用超时${name}`,
+    hint: `等了 ${formatDuration(timeoutMs)} 仍未返回，已停止本次调用。可以重试；如果这个项目一贯较慢，在 cordis.patch.yml 的本插件行调大 timeoutMs，验收类调用可调 acceptance.reviewTimeoutMs。`,
+  }
+}
+
+/** Acceptance floor: never below the configured review budget or the row timeout. */
+export function reviewBudget(timeoutMs, configured) {
+  const base = clamp(Number(configured) || 1_200_000, 120_000, 3_600_000)
+  return Math.max(Number(timeoutMs) || 0, base)
+}
+
+function formatDuration(ms) {
+  const seconds = Math.max(1, Math.round(Number(ms || 0) / 1000))
+  if (seconds < 120) return `${seconds} 秒`
+  const minutes = Math.round(seconds / 60)
+  return `${minutes} 分钟`
+}
 
 /** Modes the panel may request for a planning run. A browser request cannot
  * escalate beyond these; only an explicit config value may. */
@@ -495,7 +643,7 @@ function apiHint(stderr, proxy) {
  * Start one unattended Claude Code run.
  * @returns {{ promise: Promise<{data: object, meta: object}>, cancel: () => void }}
  */
-function startClaudeRun({ executable, prompt, cwd, schema, systemPrompt, permissionMode, model, resume, timeoutMs, proxy }) {
+function startClaudeRun({ executable, prompt, cwd, schema, systemPrompt, permissionMode, model, resume, timeoutMs, proxy, label }) {
   const command = spawnCommand(executable, cliArgs({ permissionMode, schema, model, systemPrompt, resume }))
   const child = spawn(command.file, command.args, {
     cwd,
@@ -534,8 +682,8 @@ function startClaudeRun({ executable, prompt, cwd, schema, systemPrompt, permiss
       if (timedOut) {
         fail(
           userError(
-            'Claude 调用超时',
-            `已等待 ${Math.round(timeoutMs / 1000)} 秒；可以重试、缩短目标，或在 cordis.patch.yml 调整 timeoutMs。`,
+            claudeTimeoutMessage(label, timeoutMs).message,
+            claudeTimeoutMessage(label, timeoutMs).hint,
             504,
           ),
         )
@@ -1005,6 +1153,13 @@ export function apply(ctx, config = {}) {
     permissionPreset: text(config.permissionPreset, DEFAULTS.permissionPreset).trim() || DEFAULTS.permissionPreset,
     model: text(config.model, DEFAULTS.model).trim(),
     timeoutMs: clamp(Number(config.timeoutMs) || DEFAULTS.timeoutMs, 30_000, 1_800_000),
+    engine: normalizeEngine(config.engine, DEFAULTS.engine),
+    sdkPath: text(config.sdkPath, DEFAULTS.sdkPath).trim(),
+    planningDenyTools: planningDenyTools(config.planningDenyTools),
+    dispatchAgentPreset: text(config.dispatchAgentPreset, DEFAULTS.dispatchAgentPreset).trim(),
+    dispatchPermissionPreset: text(config.dispatchPermissionPreset, DEFAULTS.dispatchPermissionPreset).trim(),
+    claudePresetIds: claudePresetList(config.claudePresetIds),
+    firstQuestionInSession: config.firstQuestionInSession === true,
   }
 
   const cliCache = { path: '', version: '', checkedAt: 0, error: '' }
@@ -1043,6 +1198,14 @@ export function apply(ctx, config = {}) {
     acceptanceSettings.dailyBudgetUsd = 5
   }
 
+  // Acceptance work is a whole-project read plus a long written answer, so the
+  // floor is deliberately generous: killing the CLI mid-run wastes the tokens
+  // already spent and produces a "timeout" the user cannot act on.
+  const reviewTimeoutMs = reviewBudget(
+    settings.timeoutMs,
+    (config.acceptance && config.acceptance.reviewTimeoutMs) ?? 1_200_000,
+  )
+
   const acceptanceOptions = {
     reportDir: (config.acceptance && config.acceptance.reportDir) || '.dsh/acceptance',
     allowedPaths:
@@ -1050,7 +1213,12 @@ export function apply(ctx, config = {}) {
         ? config.acceptance.allowedPaths
         : [],
     judgeRetries: Number((config.acceptance && config.acceptance.judgeRetries) ?? 2),
-    judgeTimeoutMs: Number((config.acceptance && config.acceptance.judgeTimeoutMs) ?? 180_000),
+    judgeTimeoutMs: clamp(
+      Number((config.acceptance && config.acceptance.judgeTimeoutMs) ?? reviewTimeoutMs),
+      120_000,
+      3_600_000,
+    ),
+    reviewTimeoutMs,
     judgeInputMaxChars: Number((config.acceptance && config.acceptance.judgeInputMaxChars) ?? 24_000),
   }
 
@@ -1065,6 +1233,61 @@ export function apply(ctx, config = {}) {
     return snapshot.over
   }
 
+  /**
+   * The Agent SDK, resolved once. `auto` prefers it and falls back to the CLI: a
+   * plugin running from a linked checkout cannot resolve the package from its own
+   * real path, so a missing install is a warn line, not a failed run.
+   */
+  const sdkLoader = createSdkLoader({ sdkPath: settings.sdkPath, dshHome: dshHome() })
+  let sdkLoadable = null
+
+  async function sdkAvailable() {
+    if (sdkLoadable !== null) return sdkLoadable
+    try {
+      await sdkLoader()
+      sdkLoadable = true
+    } catch (error) {
+      sdkLoadable = false
+      ctx.logger?.warn?.(`[claude-on-dsh] Agent SDK 不可用，本次使用 CLI：${error.message}`)
+    }
+    return sdkLoadable
+  }
+
+  /** Which engine one run uses. */
+  async function engineFor() {
+    if (settings.engine === 'cli') return 'cli'
+    if (settings.engine === 'sdk') return 'sdk'
+    return (await sdkAvailable()) ? 'sdk' : 'cli'
+  }
+
+  /**
+   * What /detect tells the panel about the engine: the word that was asked for,
+   * the one that will actually run, and where the SDK was found (or that it was
+   * not). Cheap: the SDK probe is the same cached promise engineFor() uses.
+   */
+  async function engineReport() {
+    const active = await engineFor()
+    const available = settings.engine === 'cli' ? false : await sdkAvailable()
+    return {
+      requested: settings.engine,
+      active,
+      sdk: { available, from: sdkLoader.from || '', configured: settings.sdkPath || '' },
+      denyTools: settings.planningDenyTools,
+    }
+  }
+
+  /**
+   * The engine's presence, for the call sites that gate on "is Claude usable at
+   * all". Under the SDK the native executable is optional, so the sentinel stands
+   * in for it; the two paths that must launch a real .exe (desktop handoff, the
+   * visible acceptance terminal) keep asking `findCli` directly.
+   */
+  function engineExecutable() {
+    const cli = findCli(settings.claudeCliPath)
+    if (cli) return cli
+    return settings.engine === 'cli' ? '' : SDK_SENTINEL
+  }
+
   async function runClaudeFor({ cwd, label, onCancel, ...options }) {
     try {
       const trust = await ensureClaudeTrust(cwd)
@@ -1077,9 +1300,29 @@ export function apply(ctx, config = {}) {
     const key = projectKey(cwd)
     const sessions = await readClaudeSessions()
     let resume = sessions[key] && sessions[key].sessionId
+    const engine = await engineFor()
+    const native = options.executable === SDK_SENTINEL ? '' : options.executable || ''
+    const pending = claudeTimeoutMessage(label, options.timeoutMs)
+    const attemptRun = (resumeId) => engine === 'sdk'
+      ? startSdkRun({
+          prompt: options.prompt,
+          cwd,
+          schema: options.schema,
+          model: options.model,
+          permissionMode: options.permissionMode,
+          resume: resumeId,
+          systemPrompt: options.systemPrompt,
+          executable: native,
+          timeoutMs: options.timeoutMs,
+          disallowedTools: settings.planningDenyTools,
+          loadSdk: sdkLoader,
+          makeTimeoutError: () => userError(pending.message, pending.hint, 504),
+          makeCancelError: () => userError('已取消本次 Claude 调用', '', 409),
+        })
+      : startClaudeRun({ ...options, cwd, resume: resumeId })
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const run = startClaudeRun({ ...options, cwd, resume })
+        const run = attemptRun(resume)
         if (typeof onCancel === 'function') onCancel(run.cancel)
         const result = await run.promise
         const sessionId = (result.meta && result.meta.sessionId) || resume
@@ -1117,7 +1360,7 @@ export function apply(ctx, config = {}) {
   }
 
   const judgeRunner = async ({ prompt, schema, systemPrompt, cwd, timeoutMs, onCancel }) => {
-    const executable = findCli(settings.claudeCliPath)
+    const executable = engineExecutable()
     if (!executable) {
       throw userError('没有找到 Claude Code CLI，无法进行验收判定', '请先确认 CLI 可用。', 500)
     }
@@ -1166,40 +1409,63 @@ export function apply(ctx, config = {}) {
    * registry, where the panel simply offers no choice and DSH keeps its default.
    */
   async function availableAgentPresets() {
-    let service = null
-    try {
-      service = typeof ctx.get === 'function' ? ctx.get('agentPresets') : null
-    } catch {
-      service = null
+    const items = [...(await readAgentPresetRows())]
+    // A roster this Host will not show us is not a reason to refuse the preset
+    // the operator named: pass it through so the panel can still offer it, and
+    // let the Session Controller be the judge of whether the id exists.
+    const fallback = settings.dispatchAgentPreset
+    if (items.length === 0 && fallback) {
+      items.push({ id: fallback, name: fallback, description: '', isDefault: true })
     }
-    if (!service || typeof service.list !== 'function') return []
-    let rows = []
-    try {
-      rows = await service.list()
-    } catch (error) {
-      ctx.logger?.warn?.(`[claude-on-dsh] 无法读取 DSH 预设：${messageOf(error)}`)
-      return []
+    return items
+  }
+
+  /** The roster, read from whichever service and reader this Host exposes. */
+  async function readAgentPresetRows() {
+    const service = presetService()
+    if (!service) return []
+    for (const reader of ['list', 'all', 'entries', 'snapshot', 'available', 'composedPresets']) {
+      if (typeof service[reader] !== 'function') continue
+      try {
+        const rows = normalizePresetRows(await service[reader]())
+        if (rows.length > 0) return rows
+      } catch (error) {
+        ctx.logger?.warn?.(`[claude-on-dsh] 无法读取 DSH 预设（${reader}）：${messageOf(error)}`)
+      }
     }
-    const seen = new Set()
-    const items = []
-    for (const row of Array.isArray(rows) ? rows : []) {
-      const id = text(row && row.id).trim()
-      if (!id || seen.has(id) || text(row && row.broken).trim()) continue
-      seen.add(id)
-      items.push({
-        id,
-        name: text(row.name).trim() || id,
-        description: text(row.description).trim(),
-        isDefault: Boolean(row.isDefault),
-      })
+    // Some registries only expose the record itself.
+    for (const key of ['presets', 'registry', 'items']) {
+      try {
+        const rows = normalizePresetRows(service[key])
+        if (rows.length > 0) return rows
+      } catch {}
     }
-    // The default belongs first; the rest stay in registry order.
-    return items.sort((left, right) => Number(right.isDefault) - Number(left.isDefault))
+    return []
+  }
+
+  /** The preset service, under whichever name this Host registers it. */
+  function presetService() {
+    for (const name of PRESET_SERVICE_NAMES) {
+      try {
+        const service = typeof ctx.get === 'function' ? ctx.get(name) : null
+        if (service) return service
+      } catch {}
+      try {
+        if (ctx[name]) return ctx[name]
+      } catch {}
+    }
+    return null
   }
 
   /** Empty means "let DSH apply its own default", which is not an error. */
+  /**
+   * Resolve the preset a new Session runs. An empty request falls back to the
+   * row's `dispatchAgentPreset`, which is how "dispatch into a Claude session"
+   * becomes the default without a click; empty everywhere means "let DSH decide",
+   * which is not an error.
+   */
   async function resolveAgentPreset(requested) {
-    const wanted = text(requested).trim()
+    const wanted = text(requested).trim() || settings.dispatchAgentPreset
     if (!wanted) return ''
     const items = await availableAgentPresets()
     if (items.length === 0) return ''
@@ -1306,7 +1572,7 @@ export function apply(ctx, config = {}) {
       required: ['verdict', 'opinion', 'evidence'],
       additionalProperties: false,
     }
-    const executable = findCli(settings.claudeCliPath)
+    const executable = engineExecutable()
     if (!executable) throw userError('没有找到 Claude Code CLI，无法生成验收意见', '', 500)
     const result = await runClaudeFor({
       executable,
@@ -1315,7 +1581,7 @@ export function apply(ctx, config = {}) {
       schema,
       permissionMode: 'plan',
       model: settings.model,
-      timeoutMs: Math.max(settings.timeoutMs, 300_000),
+      timeoutMs: Math.max(settings.timeoutMs, reviewTimeoutMs),
       proxy: proxyInfo(),
       label: 'review',
     })
@@ -1354,7 +1620,7 @@ export function apply(ctx, config = {}) {
         [...input.missing, ...input.placeholders].join('、'), 400)
     }
     const source = input.content
-    const executable = findCli(settings.claudeCliPath)
+    const executable = engineExecutable()
     if (!executable) throw userError('没有找到 Claude Code CLI，无法预审开发文档', '', 500)
     const prompt = buildDevDocReviewPrompt({
       projectName: text(projectName).trim() || path.basename(dir),
@@ -1517,6 +1783,125 @@ export function apply(ctx, config = {}) {
     },
   })
 
+  /**
+   * Resolve when a Session's turn ends: `running` seen, then `idle`. Mirrors the
+   * acceptance hook's edge detection, including the delayed settle, because the
+   * transcript is still being written when the status flips.
+   */
+  function waitForTurn(sessionId, timeoutMs) {
+    return new Promise((resolve) => {
+      let seenRunning = false
+      let settled = false
+      let timer = null
+      let offStatus = () => {}
+      let offDisposed = () => {}
+      const finish = (reason) => {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        try { offStatus() } catch {}
+        try { offDisposed() } catch {}
+        resolve(reason)
+      }
+      offStatus = ctx.on('agent/status', (payload) => {
+        if (!payload || !payload.agent || payload.agent.id !== sessionId) return
+        if (payload.status === 'running') {
+          seenRunning = true
+          return
+        }
+        if (payload.status === 'idle' && seenRunning) setTimeout(() => finish('idle'), 300)
+      })
+      offDisposed = ctx.on('agent/disposed', (payload) => {
+        if (!payload || !payload.agent || payload.agent.id !== sessionId) return
+        finish('disposed')
+      })
+      timer = setTimeout(() => finish('timeout'), timeoutMs)
+      if (typeof timer.unref === 'function') timer.unref()
+    })
+  }
+
+  /**
+   * The opt-in first question: asked inside a real Session whose agent preset is
+   * Claude, so the reader watches it think and the answer lands in a transcript.
+   *
+   * The reply comes back as prose, not as a schema, so it is parsed by shape and
+   * a reply that ignored the shape is reported instead of being dressed up as an
+   * answer. The returned object keeps the one-shot path's field names, so the
+   * panel renders either mode with the same code.
+   */
+  async function runFirstQuestionInSession({ projectDir, projectName, goal, requirement = '', agentPreset, permissionMode }, onCancel) {
+    const dir = expand(projectDir)
+    if (!dir || !isDir(dir)) {
+      throw userError(`项目目录不存在：${projectDir || '(空)'}`, '请先创建该目录，或在面板里重新选择。', 400)
+    }
+    const wanted = text(goal).trim()
+    if (wanted.length === 0) throw userError('请先填写项目目标', '', 400)
+
+    const preset = await resolveAgentPreset(agentPreset || settings.dispatchAgentPreset)
+    const title = text(projectName).trim() || path.basename(dir)
+    const workspace = await ctx.workspaceRegistry.create(dir, title)
+    const created = await ctx.sessionController.create({
+      workspaceId: workspace.id,
+      ...(preset ? { agentPreset: preset } : {}),
+    })
+    if (typeof onCancel === 'function') {
+      onCancel(() => {
+        try {
+          ctx.sessionController.cancel(created.sessionId)
+        } catch {}
+      })
+    }
+
+    const prompt = buildSessionPrompt({
+      projectName: title,
+      projectDir: dir,
+      goal: wanted,
+      requirement: text(requirement).trim(),
+    })
+    await ctx.sessionController.prompt(
+      {
+        sessionId: created.sessionId,
+        requestId: randomUUID(),
+        mode: 'queue',
+        content: [{ type: 'text', text: prompt }],
+        clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      },
+      AbortSignal.timeout(60_000),
+    )
+
+    const budget = Math.max(settings.timeoutMs, 600_000)
+    const outcome = await waitForTurn(created.sessionId, budget)
+    if (outcome === 'timeout') {
+      const pending = claudeTimeoutMessage('first-question', budget)
+      throw userError(pending.message, pending.hint, 504)
+    }
+
+    const inspected = await readSession(ctx, created.sessionId, AbortSignal.timeout(60_000))
+    const reply = lastAssistantText(inspected.events)
+    const parsed = parseSessionAnswer(reply)
+    if (!parsed.question) {
+      throw userError(
+        'Claude 没有按约定格式提出首问',
+        `它的回复在会话 ${created.sessionId.slice(0, 8)} 里；可以直接查看，或把 firstQuestionInSession 关掉改用弹窗模式。`,
+        502,
+      )
+    }
+    // The turn's own cost is recorded by the Claude session's footer; this
+    // plugin's ledger stays for the one-shot calls it pays for itself.
+    return {
+      projectTitle: title,
+      understanding: parsed.understanding,
+      firstQuestion: parsed.question,
+      questionOptions: parsed.choices,
+      planOutline: [],
+      handoffDraft: parsed.brief,
+      sessionId: created.sessionId,
+      projectDir: dir,
+      inSession: true,
+      complete: parsed.complete,
+    }
+  }
+
   async function runFirstQuestion(sessionId, requirement, onCancel) {
     const inspected = await readSession(ctx, sessionId, AbortSignal.timeout(60_000))
     const workspace = inspected.meta && inspected.meta.cwd
@@ -1569,7 +1954,7 @@ export function apply(ctx, config = {}) {
     let brief = ''
     let choices = []
     let claudeSessionId = ''
-    const executable = findCli(settings.claudeCliPath)
+    const executable = engineExecutable()
     if (executable) {
       try {
         const result = await runClaudeFor({
@@ -1579,7 +1964,7 @@ export function apply(ctx, config = {}) {
           schema,
           permissionMode: 'plan',
           model: settings.model,
-          timeoutMs: Math.max(settings.timeoutMs, 300_000),
+          timeoutMs: Math.max(settings.timeoutMs, 600_000),
           proxy: proxyInfo(),
           label: 'first-question',
           onCancel,
@@ -1864,6 +2249,7 @@ export function apply(ctx, config = {}) {
     }
     const { desktop, ccSwitch, claudeSettings } = staticCache.value
     const [cli, proxy] = await Promise.all([cliInfo(), probeProxy(claudeSettings.baseUrl)])
+    const agentEngine = await engineReport()
     const liveState = readJsonSafe(ccSwitch.liveStatePath)
     const liveApps = liveState && liveState.apps && typeof liveState.apps === 'object' ? liveState.apps : null
     const appState = liveApps
@@ -1881,6 +2267,12 @@ export function apply(ctx, config = {}) {
       platform: process.platform,
       node: process.version,
       cli,
+      agentEngine,
+      features: {
+        firstQuestionInSession: settings.firstQuestionInSession,
+        engine: settings.engine,
+        dispatchAgentPreset: settings.dispatchAgentPreset,
+      },
       desktop: { found: Boolean(desktop.path), path: desktop.path, source: desktop.source },
       ccSwitch: {
         found: Boolean(ccSwitch.path),
@@ -1935,7 +2327,7 @@ export function apply(ctx, config = {}) {
     if (opinion) goal = `${goal}${goal ? '\n\n' : ''}用户验收意见：${opinion}`
     const titleBase = path.basename(dir)
     const reportPath = path.join(dir, '.dsh', 'acceptance', 'dsh-验收.md')
-    const executable = findCli(settings.claudeCliPath)
+    const executable = engineExecutable()
     const schema = {
       type: 'object',
       properties: { title: { type: 'string' }, brief: { type: 'string' } },
@@ -1953,7 +2345,7 @@ export function apply(ctx, config = {}) {
         schema,
         permissionMode: 'plan',
         model: settings.model,
-        timeoutMs: Math.max(settings.timeoutMs, 300_000),
+        timeoutMs: Math.max(settings.timeoutMs, 600_000),
         proxy: proxyInfo(),
         label: 'acceptance-brief',
         onCancel,
@@ -1969,6 +2361,9 @@ export function apply(ctx, config = {}) {
   }
 
   function beginClaude(kind, payload, { setCancel } = {}) {
+    if (kind === 'brief-session') {
+      return { promise: runFirstQuestionInSession(payload, setCancel) }
+    }
     if (kind === 'first-question') {
       const sessionId = text(payload.sessionId).trim()
       const requirement = text(payload.requirement).trim()
@@ -2096,24 +2491,41 @@ export function apply(ctx, config = {}) {
     // Full access = the danger-full-access preset: danger-full-access sandbox
     // plus approval 'never'. Pin it before the first prompt so the first turn
     // already runs without approval prompts.
+    //
+    // Unless the Session's own agent preset owns that decision: a Claude session
+    // carries its own per-session permission mode, and pinning a preset here
+    // would contradict the mode the reader picked there.
+    const pinPermission = shouldPinPermission({
+      configured: settings.dispatchPermissionPreset,
+      agentPreset,
+      claudePresetIds: settings.claudePresetIds,
+    })
     let permission = settings.permissionPreset
     let permissionWarning = ''
-    try {
-      ctx.permissionPresets.set(live, permission)
-      permission = ctx.permissionPresets.current(live)
-    } catch (error) {
-      permissionWarning = messageOf(error)
-      try {
-        if (!activated) {
-          const resolved = await ctx.sessionController.resolveAgent(created.sessionId)
-          if (resolved && resolved.agent) activated = resolved.agent
-        }
-        if (activated) ctx.approval.setPolicy(activated, 'never')
-      } catch {}
+    if (!pinPermission) {
       try {
         permission = ctx.permissionPresets.current(live)
       } catch {
-        permission = 'custom'
+        permission = 'preset-owner'
+      }
+    } else {
+      try {
+        ctx.permissionPresets.set(live, permission)
+        permission = ctx.permissionPresets.current(live)
+      } catch (error) {
+        permissionWarning = messageOf(error)
+        try {
+          if (!activated) {
+            const resolved = await ctx.sessionController.resolveAgent(created.sessionId)
+            if (resolved && resolved.agent) activated = resolved.agent
+          }
+          if (activated) ctx.approval.setPolicy(activated, 'never')
+        } catch {}
+        try {
+          permission = ctx.permissionPresets.current(live)
+        } catch {
+          permission = 'custom'
+        }
       }
     }
 
@@ -2161,6 +2573,7 @@ export function apply(ctx, config = {}) {
       costUsd: typeof payload.costUsd === 'number' ? payload.costUsd : null,
       durationMs: typeof payload.durationMs === 'number' ? payload.durationMs : null,
       permission,
+      permissionPinned: pinPermission,
       agentPreset: agentPreset || created.agentPreset || '',
     }
     try {
@@ -2203,6 +2616,8 @@ export function apply(ctx, config = {}) {
    * watch Claude inspect, run tests, and write a visible acceptance report.
    */
   async function openReviewTerminal({ dir, goal, focus }) {
+    // A terminal (and the desktop handoff below) runs a real .exe: the Agent SDK
+    // engine has no window to show, so these two keep asking for the native CLI.
     const executable = findCli(settings.claudeCliPath)
     if (!executable) {
       throw userError('没有找到 Claude Code CLI，无法启动可见验收', '请先确认 CLI 可用。', 500)
@@ -2396,7 +2811,7 @@ export function apply(ctx, config = {}) {
         }
         const body = await readBody(request)
         const kind = text(body.kind)
-        if (!['brief', 'refine', 'first-question', 'acceptance-brief', 'acceptance', 'devdoc'].includes(kind)) {
+        if (!['brief', 'brief-session', 'refine', 'first-question', 'acceptance-brief', 'acceptance', 'devdoc'].includes(kind)) {
           throw userError('未知的任务类型')
         }
       const job = start(kind, ({ setCancel, update, payload: savePayload }) => {
@@ -2625,7 +3040,7 @@ export function apply(ctx, config = {}) {
         if (opinion) goal = `${goal}${goal ? '\n\n' : ''}用户验收意见：${opinion}`
         const titleBase = path.basename(dir)
         const reportPath = path.join(dir, '.dsh', 'acceptance', 'dsh-验收.md')
-        const executable = findCli(settings.claudeCliPath)
+        const executable = engineExecutable()
         const schema = {
           type: 'object',
           properties: { title: { type: 'string' }, brief: { type: 'string' } },
@@ -2644,7 +3059,7 @@ export function apply(ctx, config = {}) {
               schema,
               permissionMode: 'plan',
               model: settings.model,
-              timeoutMs: Math.max(settings.timeoutMs, 300_000),
+              timeoutMs: Math.max(settings.timeoutMs, 600_000),
               proxy: proxyInfo(),
               label: 'acceptance-brief',
             })

@@ -1,8 +1,8 @@
 {
   "name": "claude-on-dsh",
-  "version": "2.1.5",
+  "version": "2.3.0",
   "private": true,
-  "description": "Claude on DSH: Claude Code CLI or Desktop plans a project, hands it to DSH, and adds editable opening questions, handoffs, post-turn Claude review, and a reviewed development document.",
+  "description": "Claude on DSH: Claude Code CLI or Agent SDK plans a project, hands it to DSH, and adds editable opening questions, handoffs, post-turn Claude review, and a reviewed development document.",
   "type": "module",
   "repository": {
     "type": "git",

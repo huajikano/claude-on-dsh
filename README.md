@@ -20,7 +20,7 @@
    固定版本（推荐）：
 
    ```text
-   github:huajikano/claude-on-dsh#v2.1.0
+   github:huajikano/claude-on-dsh#v2.3.0
    ```
 
    等价写法：
@@ -34,24 +34,24 @@
 
 要求：Windows；本机已安装 Claude Code CLI（或安装后在插件配置里填 `claudeCliPath`）；DSH 安装插件需要 Full access 或批准。仓库公开，无需登录。插件是纯 JavaScript bundle，没有构建步骤。
 
-> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 2.1.0。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
+> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 2.3.0。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
 
 ## 更新已安装的版本（重要）
 
 DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 bundle**；直接再次 Add 会提示 `already-installed`，这不是插件版本号没改，而是管理器没有原地升级路径。
 
-更新到 2.1.0：
+更新到 2.3.0：
 
 1. 打开 DSH → **Plugins**；
 2. 找到 **Claude on DSH**，点 **Remove**（只点禁用不够，必须移除依赖）；
 3. 重新 **Add plugin**，填入：
    ```text
-   github:huajikano/claude-on-dsh#v2.1.0
+   github:huajikano/claude-on-dsh#v2.3.0
    ```
 4. 安装后启用，重启/刷新 DSH；
 5. 如果 profile 里的配置被清除，按下面「配置」一节重新填 `claudeCliPath` 等值。
 
-> 不要用不带 `#v2.1.0` 的 `github:huajikano/claude-on-dsh` 做更新：那会跟随默认分支，无法判断装的是哪一版。固定 tag 更可控。
+> 不要用不带 `#v2.3.0` 的 `github:huajikano/claude-on-dsh` 做更新：那会跟随默认分支，无法判断装的是哪一版。固定 tag 更可控。
 
 ## 主界面
 
@@ -62,6 +62,22 @@ DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 
 - **开发文档**：在主工作区编辑/导入文档、Claude 预审、确认后交付；预审结果会明确标为 AI 意见，必须勾选「我已审阅预审结果」才能交给 DSH。
 
 验收设置默认折叠，只显示当前策略摘要；展开后可调整自动验收开关、默认项和每日预算。运行中、失败或 Host 重启后中断的长任务会显示在顶部任务条，可查看或重试。
+
+### 面板自己的视觉
+
+面板不跟着宿主的默认外观走，也不需要装主题插件：它自带一套 Claude Code Desktop 的语言，只用宿主的暗色标记决定明暗。
+
+- **纸**：画布是暖奶油 `#f5f2ec`，卡片是 `#fffdf8`，边界是墨色 10% 的发丝线——没有灰底方块，也没有重阴影。
+- **字**：标题走衬线（拉丁先行，中文落到思源宋/宋体一类），界面走无衬线，代码走等宽。
+- **色**：只有一个强调色 `#d97757`，只出现在闪光标、主按钮和「正在进行」的那一步。
+- **形**：圆角阶梯 16 / 12 / 8 / 5；卡片 12、输入 8、胶囊 999。
+- **暗**：`light-dark()` 按元素自己的 `color-scheme` 取暗色，两条规则从宿主的 `data-ds-dark-theme` 标出来。
+
+装了 dsh-claude-style 时，面板会并入那套配色（`body[data-dsh-claude-style]` 作用域内改用主题的画布、卡片、发丝线与衬线体）；没装则完全自持。样式表源文件是 `tools/panel.css`，用 `node tools/apply-panel-css.mjs` 注入 `client.js` 的模板——脚本会拒绝含反引号或 `${` 的 CSS（那会截断 JS 模板），并用 postcss 先解析一遍。
+
+`node tools/check-panel-coverage.mjs` 核对标记里用到的每个 `cc-*` 类都有样式（当前 124/124）。
+
+![面板样式](docs/panel/panel-restyled.png)
 
 ## 查看与修改提示词
 
@@ -161,10 +177,70 @@ DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 
 | 组件 | 位置 | 说明 |
 |---|---|---|
 | Claude Code CLI | `%APPDATA%\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe`（自动探测） | 以 `-p --output-format json --json-schema` 运行，提示词走 stdin，避免命令行长度与转义问题 |
+| Agent SDK | `@anthropic-ai/claude-agent-sdk`（profile 内自动探测） | 第二套引擎：`query()` + `outputFormat: {type:'json_schema'}`，结构化结果走 `structured_output`，提示词与 schema 都不再经过命令行。见「两套引擎」 |
 | Claude 桌面版 | `C:\Program Files\WindowsApps\Claude_3.6556.2.0_x64__pzs8sxrjxfjjc\app\claude.exe`（自动探测） | 桌面版没有可编程接口，因此作为「人工接管」通道：生成简报、复制到剪贴板、拉起桌面版，再把 Claude 的回复粘回面板 |
 | CC Switch | `D:\CC Switch\cc-switch.exe`（自动探测） | CLI 与桌面版的认证由 CC Switch 的本地代理提供；面板会显示代理是否可达，并可一键拉起 CC Switch |
 
 > 桌面版通过 CC Switch 使用其配置的本地代理；插件自身不读取、不保存任何凭据，只把 `~/.claude/settings.json` 里的 `ANTHROPIC_BASE_URL` 当作代理健康检查目标。
+
+## 两套引擎（CLI / Agent SDK）
+
+首问、定稿、开发文档预审、验收任务书、验收判定与验收意见这六处调用共用同一个入口 `runClaudeFor`，入口之下可以换引擎：
+
+| `engine` | 行为 |
+|---|---|
+| `auto`（默认） | 先试 Agent SDK；`@anthropic-ai/claude-agent-sdk` 解析不到就退回 CLI，并在日志里留一行 warn。哪种都不缺就不影响使用 |
+| `sdk` | 只用 SDK；解析失败直接报错并列出尝试过的目录 |
+| `cli` | 只用原来的 `claude -p` 子进程，行为与 2.1.x 完全一致 |
+
+两条路的差别：
+
+- **CLI 路**：`-p --output-format json --json-schema`，schema 作为命令行参数，stdout 一个 JSON blob，`extractResult` 解析。
+- **SDK 路**：`query({ prompt, options })`，schema 走 `outputFormat`，结果从 `result` 消息的 `structured_output` 取；`settingSources: ['user','project','local']` 让 Claude Code 自己的设置与认证照常生效；超时与取消都打到 `AbortController`，SDK 会把它拉起的 CLI 一起收掉。
+
+权限模式照旧：面板只会请求 `plan` / `dontAsk` / `acceptEdits`，`auto` 在 SDK 侧映射成它自己的 `default`，`bypassPermissions` 需要 `allowDangerouslySkipPermissions`（只有配置里显式写才会发生）。`executable` 在 SDK 路下是可选的：有原生 CLI 就传给它当 `pathToClaudeCodeExecutable`，没有就用 SDK 自带的那份。
+
+engine 走 SDK 时还有第二道锁：`planningDenyTools`。本插件的每一次 Claude 调用都是「读」——读项目、读历史、读改动，从不写文件也从不执行命令，所以 SDK 路的工具禁用表默认就是 `Write`、`Edit`、`MultiEdit`、`NotebookEdit`、`Bash`、`BashOutput`、`KillShell`。plan 模式本来就只读，这一层是防「模式被改宽」的保险；要放开就把这个配置写成 `[]` 之外的数组（写空数组等于用回默认表）。
+
+面板右上角的状态 chip 会显示当前实际在跑哪条路：`Agent SDK` 亮着就是 SDK，显示 `CLI 引擎` 就是子进程；悬停能看到 SDK 的实际路径与规划期禁用表。数据来自 `/detect` 的 `agentEngine` 字段（`requested` 配置值 / `active` 实际值 / `sdk.available` 与 `from`）。
+
+## 让派发出去的会话直接由 Claude 跑
+
+「Claude 负责首问、DSH 负责执行」是默认分工，不是唯一分工：派发时那个新会话跑在哪个 DSH Agent 预设上，是可以选的。
+
+- 面板「项目设定」里的 **DSH 新会话模式** 下拉就是它；可选项来自宿主的预设注册表。
+- 配置项 `dispatchAgentPreset` 决定不选的时候用哪个，默认 `claude` —— 也就是 [@norman-else/dsh-claude](https://github.com/Norman-else/dsh-claude) 声明的那套预设。选中它，派发出去的对话里坐着的就是 **Claude Code 本体**：它的 agent loop、工具、CLAUDE.md、Skills、Hooks、MCP 全部照旧，DSH 只提供对话框、审批面与工作区。
+- 于是有三种分工：`Claude 规划 → DSH 执行`（默认）、`Claude 规划 → Claude 执行`（本节）、`全是 Claude`（直接在 DSH 里新开一个 Claude 会话，不走本插件）。
+
+预设清单读不到时不会静默变回 DSH 默认：`/presets` 会回退成配置里那一个 id，面板照样能选、`/dispatch` 照样按它建会话；宿主真的没有这个预设时，由 Session Controller 报错，而不是悄悄换个引擎。
+
+### 首问也可以在会话里问（默认关）
+
+「让 Claude 提出首问」默认是一次性调用：结果回到弹窗，不留下任何会话。想让首问也发生在 Claude 会话里、看得见它思考，就打开面板上的 **首问进会话** 开关（或配 `firstQuestionInSession: true`）。
+
+打开后：建一个 Claude 会话 → 把首问指令作为消息发进去 → 等这一轮结束 → 从会话读出回复 → 按固定四段（理解 / 首问 / 候选答案 / 交接书）解析。会话里没有 `outputFormat` 兜底，所以模型没按格式答时只取"第一个带问号的句子"，并如实标记为不完整——不会编一个问题出来。
+
+代价是每次首问都会留一个真实会话；只想快速拿结果就关掉它。
+
+```yaml
+- id: claude-on-dsh
+  config:
+    dispatchAgentPreset: claude   # 空 = 用 DSH 自己的默认预设
+    dispatchPermissionPreset: auto
+    firstQuestionInSession: false
+```
+
+SDK 的解析顺序：配置里的 `sdkPath` → `$DSH_HOME/profiles/*/node_modules/@anthropic-ai/claude-agent-sdk` → 裸包名。第二条是给「从源码 link 进来」的安装准备的——那种安装按真实路径解析，看不到 profile 里的依赖。
+
+## 与 dsh-claude-style 主题配合
+
+面板的样式全部经 `--dsw-alias-*` 桥到宿主调色板上（`--cc-accent` 等自带原值兜底），所以换主题预设时面板跟着换，不再是一块暖白孤岛。装了 [dsh-claude-style](https://github.com/Nwflower/dsh-claude-style) 的话，外观里多出一套 **纸面（Paper）** 预设，取值就是本插件原来的配色（`#fffdf8` 画布、`#d97757` 强调、`#2f2a25` 墨色、`#fffaf2` 侧栏）——选中它，页面与面板是同一张纸。标题会借用主题的衬线体（`--dsh-claude-font-serif`），没装主题时回落到 Georgia。
+
+亮色下面板保留自己那张纸（这是它的脸，宿主不该用白色把它抹平），跟主题互通的只有两类：**强调色** 跟随 `--dsw-alias-brand-primary`，**暗色** 跟随宿主的表层阶梯。所以换到 DeepSeek / 森林 / 暮色 / 蔷薇时，面板的徽章、进度点、会话 chip 会跟着变色；选「纸面」时页面底色正好等于面板的纸，两者无缝。
+
+**装了主题时面板整体并入皮肤**：只要 body 上有 `data-dsh-claude-style`（主题自己打的标记），面板的画布、卡片、墨色、发丝线与衬线标题全部改用当前预设的值——换哪套配色，面板就是那套配色的一部分；没装主题时它照旧用自己那张暖纸。想看到最明显的差别：外观里选「纸面」，`#fffdf8` 的暖纸会同时铺满页面与面板。
+
+要让「纸面」出现在外观里，主题必须是本地构建版：把源码克隆的 `lib/`、`locale/`、`skin.json`、`cordis.patch.yml` 同步到 profile 的 `node_modules/dsh-claude-style/`，或者直接 `dsh plugin --profile desktop add "link:<源码目录>"`，然后重启 DSH Desktop。
 
 ## 本地开发 / 离线安装
 
@@ -188,6 +264,10 @@ DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 
     permissionPreset: danger-full-access  # 新会话权限预设；完全权限
     model: ''                  # 传给 CLI 的 --model；空则沿用 Claude 原生设置
     timeoutMs: 240000          # 单次 Claude 调用超时
+    engine: auto               # auto | cli | sdk；auto 优先 SDK，解析不到退回 CLI
+    sdkPath: ''                # Agent SDK 目录；空则搜 $DSH_HOME/profiles/*/node_modules
+    acceptance:
+      reviewTimeoutMs: 1200000 # 验收/评审类调用的预算（默认 20 分钟）
 ```
 
 ## 安全边界

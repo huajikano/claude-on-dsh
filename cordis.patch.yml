@@ -13,6 +13,26 @@
 #   permissionPreset danger-full-access (full access) or another configured preset
 #   model           optional model override passed to the Claude Code CLI
 #   timeoutMs       per-call timeout for the CLI (default 240000)
+#   engine          auto | cli | sdk — auto prefers the Agent SDK and falls back
+#                   to the CLI when the package cannot be resolved
+#   sdkPath         directory of @anthropic-ai/claude-agent-sdk; empty searches
+#                   $DSH_HOME/profiles/*/node_modules
+#   planningDenyTools  tools a planning call may not use under the SDK engine;
+#                   omit for the shipped read-only guard (Write, Edit, MultiEdit,
+#                   NotebookEdit, Bash, BashOutput, KillShell)
+#   dispatchAgentPreset  DSH agent preset a dispatched Session runs on; `claude`
+#                   is the preset @norman-else/dsh-claude declares, so the
+#                   dispatched conversation is Claude Code itself. Empty = DSH's
+#                   own default.
+#   dispatchPermissionPreset  auto pins danger-full-access unless the target preset
+#                   owns its permission model (see claudePresetIds); '' never pins;
+#                   any other value is pinned as that preset name.
+#   claudePresetIds  presets that carry their own permission model, and therefore
+#                   keep it when dispatchPermissionPreset is auto.
+#   firstQuestionInSession  ask the opening question inside a real Claude session
+#                   instead of a one-shot call: you watch it think, and the answer
+#                   arrives as prose (parsed by shape). Off by default; the panel's
+#                   "首问进会话" switch overrides it for one run.
 #   acceptance      legacyGate: false (auto gate is opt-in), gatePolicy: off|ask|auto
 #                   (only effective with legacyGate: true), timeoutMs,
 #                   askTimeoutMs, judgeRetries, reportDir, allowedPaths
@@ -23,6 +43,13 @@
       config:
         permissionMode: plan
         timeoutMs: 240000
+        engine: auto
+        sdkPath: ''
+        dispatchAgentPreset: claude
+        dispatchPermissionPreset: auto
+        claudePresetIds:
+          - claude
+        firstQuestionInSession: false
         acceptance:
           legacyGate: false
           gatePolicy: off
