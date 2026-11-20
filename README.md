@@ -58,6 +58,8 @@ DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 
 > 3. 检查对应 profile 的 `package.json` / `cordis.patch.yml` 已不再登记 `claude-on-dsh`；不要删除 `$DSH_HOME/claude-on-dsh/` 下的设置、记录或监工状态。
 > 4. 重新 Add plugin，并使用上面的固定 tag。
 >
+> 这是 DSH/dshmarket 的宿主侧更新流程问题，不是 `claude-on-dsh` 运行代码的问题：`installBundle()` 在已存在同名依赖时会在 `pnpm` 前返回 `already-installed`，正确的更新流程是先移除再安装。请先把 DSH Desktop / `dshmarket` 更新到包含 remove-then-install 修复的版本；如果市场本身也无法更新，直接按上面的 Remove → 完全退出并重启 DSH → Add 流程处理。相关背景见 [dsh-market issue #922](https://github.com/dsh-market/dsh-market/issues/922)。
+>
 > 这个错误发生在插件代码加载之前，插件本身无法通过运行时逻辑修复；若 Remove 后仍报告同名已安装，应先备份 profile，再让 DSH Desktop 清理残留的 bundle 登记后重启。
 >
 > 不要用不带 `#v2.4.0` 的 `github:huajikano/claude-on-dsh` 做更新；固定 tag 才能明确安装的版本。
