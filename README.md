@@ -20,7 +20,7 @@
    固定版本（推荐）：
 
    ```text
-   github:huajikano/claude-on-dsh#v2.4.0
+   github:huajikano/claude-on-dsh#v2.5.0
    ```
 
    等价写法：
@@ -34,19 +34,19 @@
 
 要求：Windows；本机已安装 Claude Code CLI（或安装后在插件配置里填 `claudeCliPath`）；DSH 安装插件需要 Full access 或批准。仓库公开，无需登录。插件是纯 JavaScript bundle，没有构建步骤。
 
-> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 2.4.0。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
+> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 2.5.0。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
 
 ## 更新已安装的版本（重要）
 
 DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 bundle**；直接再次 Add 会提示 `already-installed`，这不是插件版本号没改，而是管理器没有原地升级路径。
 
-更新到 2.4.0：
+更新到 2.5.0：
 
 1. 打开 DSH → **Plugins**；
 2. 找到 **Claude on DSH**，点 **Remove**（只点禁用不够，必须移除依赖）；
 3. 重新 **Add plugin**，填入：
    ```text
-   github:huajikano/claude-on-dsh#v2.4.0
+   github:huajikano/claude-on-dsh#v2.5.0
    ```
 4. 安装后启用，重启/刷新 DSH；
 5. 如果 profile 里的配置被清除，按下面「配置」一节重新填 `claudeCliPath` 等值。
@@ -62,7 +62,7 @@ DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 
 >
 > 这个错误发生在插件代码加载之前，插件本身无法通过运行时逻辑修复；若 Remove 后仍报告同名已安装，应先备份 profile，再让 DSH Desktop 清理残留的 bundle 登记后重启。
 >
-> 不要用不带 `#v2.4.0` 的 `github:huajikano/claude-on-dsh` 做更新；固定 tag 才能明确安装的版本。
+> 不要用不带 `#v2.5.0` 的 `github:huajikano/claude-on-dsh` 做更新；固定 tag 才能明确安装的版本。
 
 ## 主界面
 
