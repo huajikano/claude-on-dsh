@@ -78,7 +78,6 @@ DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 
 
 `node tools/check-panel-coverage.mjs` 核对标记里用到的每个 `cc-*` 类都有样式（当前 124/124）。
 
-![面板样式](docs/panel/panel-restyled.png)
 
 ## 查看与修改提示词
 
