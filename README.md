@@ -51,7 +51,7 @@ DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 
 4. 安装后启用，重启/刷新 DSH；
 5. 如果 profile 里的配置被清除，按下面「配置」一节重新填 `claudeCliPath` 等值。
 
-> 不要用不带 `#v2.3.0` 的 `github:huajikano/claude-on-dsh` 做更新：那会跟随默认分支，无法判断装的是哪一版。固定 tag 更可控。
+> 不要用不带 `#v2.4.0` 的 `github:huajikano/claude-on-dsh` 做更新：那会跟随默认分支，无法判断装的是哪一版。固定 tag 更可控。
 
 ## 主界面
 
