@@ -11,8 +11,9 @@
  *
  *   node tools/apply-panel-css.mjs [--check]
  */
-import { readFileSync, writeFileSync, copyFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 
 /**
  * postcss is a dev convenience, not a dependency of this plugin (the shipped
@@ -22,19 +23,13 @@ import { createRequire } from 'node:module'
  */
 function loadPostcss() {
   const require = createRequire(import.meta.url)
-  for (const specifier of ['postcss', 'D:/XiangMu/upstream-dsh-claude-style/node_modules/postcss/lib/postcss.mjs']) {
-    try {
-      return require(specifier)
-    } catch {}
-  }
-  return null
+  try { return require('postcss') } catch { return null }
 }
 
 const postcss = loadPostcss()
 
-const CLIENT = 'D:/XiangMu/claude-on-dsh-2.1.4/client.js'
-const CSS_FILE = 'D:/XiangMu/claude-on-dsh-2.1.4/tools/panel.css'
-const BACKUP = `${CLIENT}.bak-panelcss`
+const CLIENT = fileURLToPath(new URL('../client.js', import.meta.url))
+const CSS_FILE = fileURLToPath(new URL('./panel.css', import.meta.url))
 const check = process.argv.includes('--check')
 
 const css = readFileSync(CSS_FILE, 'utf8')
@@ -70,6 +65,5 @@ console.log(`stylesheet: ${current.length} -> ${next.length} chars (${changed ? 
 if (check) process.exit(changed ? 1 : 0)
 if (!changed) process.exit(0)
 
-if (!existsSync(BACKUP)) copyFileSync(CLIENT, BACKUP)
 writeFileSync(CLIENT, source.slice(0, start) + next + source.slice(end), 'utf8')
 console.log(`wrote ${CLIENT}`)

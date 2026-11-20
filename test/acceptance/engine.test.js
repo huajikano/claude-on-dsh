@@ -245,3 +245,9 @@ test('the deny list travels with the turn it starts', async () => {
   assert.deepEqual(calls[0].options.disallowedTools, ['Write'])
   assert.equal(calls[0].options.outputFormat.type, 'json_schema')
 })
+
+test('supervisor SDK calls expose only read tools and disable inherited MCP servers', () => {
+  const options = buildSdkOptions({ cwd: 'C:/project', readOnly: true })
+  assert.deepEqual(options.tools, ['Read', 'Glob', 'Grep']); assert.deepEqual(options.mcpServers, {}); assert.equal(options.strictMcpConfig, true)
+  assert.equal('tools' in buildSdkOptions({ cwd: 'C:/project' }), false)
+})

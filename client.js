@@ -172,7 +172,88 @@ window.__ModuleLoader__.load({
         sessionReset: '重置',
         sessionResetConfirm: '重置当前 Claude 会话映射？下次 Claude 调用会新建会话，旧会话文件保留。',
         sessionResetDone: '已重置 Claude 会话',
-        reviewSettings: 'DSH 完成后的验收',
+        supervisorTitle: "Claude 全局监工",
+        supervisorEnabled: "全局自动监工",
+        supervisorHint: "每轮结束或中断后核查目标和进度；判断继续、等待或达标。仅处理主会话，不依赖面板一直打开。",
+        supervisorCli: "CLI / SDK · 全自动",
+        supervisorDesktop: 'Claude Desktop · MCP / 手动回填',
+        supervisorDesktopHint: '在 Claude Desktop 对话中请 Claude 使用 claude-on-dsh-supervisor 连接处理此待审任务。',
+        supervisorOverview: '概览',
+        supervisorHistoryButton: '监工记录',
+        supervisorSettingsButton: '监工设置',
+        supervisorEngineLabel: '监工引擎',
+        supervisorCooldown: '续跑间隔（秒）',
+        supervisorRetryDelay: '初次重试间隔（秒）',
+        supervisorMaxRetries: '最多重试次数',
+        supervisorNoProgress: '连续无进展上限',
+        supervisorMaxRounds: '单会话续跑上限',
+        supervisorSave: '保存设置',
+        supervisorSaved: '监工设置已保存',
+        supervisorConnectionTitle: 'Claude Desktop 连接',
+        supervisorConnectionConnected: 'MCP 已连接',
+        supervisorConnectionRunning: '应用已运行 · MCP 未连接',
+        supervisorConnectionStopped: '应用未运行',
+        supervisorConnectionUnknown: '状态未知',
+        supervisorConnectionInfo: 'MCP 不会自动新建桌面对话。无人值守请使用 CLI / SDK。',
+        supervisorConnectionMissing: '尚未配置监工 MCP 服务器。',
+        supervisorConnectionReload: '已配置，等待握手。请在 Claude Desktop 重载连接，或正常退出后重新打开。',
+        supervisorRuntimeMissing: '没有找到可用的 Node 或 MCP 入口。',
+        supervisorBridgeClient: 'MCP 客户端',
+        supervisorBridgeBackup: '配置备份',
+        supervisorBridgePath: '桌面配置位置',
+        supervisorRefreshDesktop: '检测连接',
+        supervisorConfigure: '配置 MCP 连接',
+        supervisorConfigureConfirm: '允许 Claude Desktop 通过 MCP 读取待审任务与项目上下文，并提交监工判断？不会自动重启应用。',
+        supervisorOpenApp: '打开 Claude Desktop',
+        supervisorManualReply: '手动提交判断',
+        supervisorTask: '桌面待审任务',
+        supervisorEvidence: '证据',
+        supervisorExecuted: '累计执行',
+        supervisorDecisions: '有效判断',
+        supervisorContinued: '已续跑',
+        supervisorCompleted: '已达标',
+        supervisorFailed: '失败',
+        supervisorPending: '桌面待审',
+        supervisorWaited: '未干预',
+        supervisorCancelled: '已取消',
+        supervisorInterrupted: '已中断',
+        supervisorStale: '已失效',
+        supervisorUncertain: '结果不确定',
+        supervisorPreparing: '准备中',
+        supervisorControlRecord: '状态操作',
+        supervisorHistoryStatus: '按结果筛选',
+        supervisorHistoryFilterAll: '全部结果',
+        supervisorSessionFilter: '按会话筛选',
+        supervisorAllSessions: '全部会话',
+        supervisorHistoryEmpty: '没有符合条件的监工记录。',
+        supervisorRefreshHistory: '刷新记录',
+        supervisorHistoryLoading: '正在读取监工记录…',
+        supervisorLoadMore: '加载更多',
+        supervisorLegacyChecks: '旧版已记录判断（不计入上述累计）',
+        supervisorRetention: '保留最近 1,000 条已结束记录；累计统计不受清理影响。',
+        supervisorCountHint: 'CLI / SDK 按发起的检查尝试计；Desktop 在收到有效判断后计。',
+        supervisorDesktopPrompt: '待审提示词',
+        supervisorEmpty: "等待主会话下一轮结束。不会扫描历史会话并擅自启动它们。",
+        supervisorPause: "暂停监工",
+        supervisorResume: "恢复监工",
+        supervisorOpen: "打开会话",
+        supervisorOpenDesktop: "打开桌面版并复制待审内容",
+        supervisorSubmit: "提交桌面 Claude 判断",
+        supervisorReply: "粘贴桌面 Claude 返回的 JSON",
+        supervisorWaiting: "监听中",
+        supervisorOff: "全局已关闭",
+        supervisorUnavailable: "监工状态暂不可用",
+        supervisorPhaseWatching: "等待下轮",
+        supervisorPhaseReviewing: "Claude 检查中",
+        supervisorPhaseRetrying: "退避重试",
+        supervisorPhaseDesktop: "等待桌面回复",
+        supervisorPhaseSending: "发送中",
+        supervisorPhaseComplete: "已达标 · 停止监工",
+        supervisorPhasePaused: "已暂停",
+        supervisorPhaseAttention: "需要核对",
+        manualAcceptanceToggle: "显示手动验收入口（默认关闭）",
+        acceptanceOptional: "可选验收 · 默认关闭",
+        reviewSettings: '可选验收',
         reviewSettingsHint: '开启后，DSH 每轮结束会在原会话里出现验收选项；默认项也可以设成直接交给 Claude。',
         autoPromptToggle: 'DSH 完成后自动出现验收选项',
         defaultActionLabel: '默认项',
@@ -435,7 +516,88 @@ window.__ModuleLoader__.load({
         sessionReset: 'Reset',
         sessionResetConfirm: 'Reset the current Claude session mapping? The next Claude call starts a new session; old session files stay.',
         sessionResetDone: 'Claude session reset',
-        reviewSettings: 'Acceptance after DSH',
+        supervisorTitle: "Claude global supervisor",
+        supervisorEnabled: "Monitor all main sessions",
+        supervisorHint: "Check the original goal after each completed or interrupted turn; continue, wait, or finish. Monitoring runs in the host while the panel is closed.",
+        supervisorCli: "CLI / SDK · automatic",
+        supervisorDesktop: 'Claude Desktop · MCP / manual reply',
+        supervisorDesktopHint: 'In Claude Desktop, ask Claude to use the claude-on-dsh-supervisor connection to process this review task.',
+        supervisorOverview: 'Overview',
+        supervisorHistoryButton: 'Monitor history',
+        supervisorSettingsButton: 'Monitor settings',
+        supervisorEngineLabel: 'Monitor engine',
+        supervisorCooldown: 'Continuation interval (s)',
+        supervisorRetryDelay: 'Initial retry delay (s)',
+        supervisorMaxRetries: 'Maximum retries',
+        supervisorNoProgress: 'No-progress limit',
+        supervisorMaxRounds: 'Continuation limit per session',
+        supervisorSave: 'Save settings',
+        supervisorSaved: 'Monitor settings saved',
+        supervisorConnectionTitle: 'Claude Desktop connection',
+        supervisorConnectionConnected: 'MCP connected',
+        supervisorConnectionRunning: 'App running · MCP not connected',
+        supervisorConnectionStopped: 'App not running',
+        supervisorConnectionUnknown: 'Status unknown',
+        supervisorConnectionInfo: 'MCP cannot start a Desktop chat. Use CLI / SDK for unattended reviews.',
+        supervisorConnectionMissing: 'The monitor MCP server has not been configured.',
+        supervisorConnectionReload: 'Configured, awaiting handshake. Reload the connection in Claude Desktop or quit and reopen the app.',
+        supervisorRuntimeMissing: 'Node or the MCP entry point was not found.',
+        supervisorBridgeClient: 'MCP client',
+        supervisorBridgeBackup: 'Configuration backup',
+        supervisorBridgePath: 'Desktop configuration path',
+        supervisorRefreshDesktop: 'Check connection',
+        supervisorConfigure: 'Configure MCP connection',
+        supervisorConfigureConfirm: 'Allow Claude Desktop to read pending reviews and their project context and submit decisions via MCP? The app will not restart automatically.',
+        supervisorOpenApp: 'Open Claude Desktop',
+        supervisorManualReply: 'Submit a decision manually',
+        supervisorTask: 'Pending Desktop task',
+        supervisorEvidence: 'Evidence',
+        supervisorExecuted: 'Executions',
+        supervisorDecisions: 'Valid decisions',
+        supervisorContinued: 'Continued',
+        supervisorCompleted: 'Goal met',
+        supervisorFailed: 'Failed',
+        supervisorPending: 'Pending Desktop',
+        supervisorWaited: 'No action',
+        supervisorCancelled: 'Cancelled',
+        supervisorInterrupted: 'Interrupted',
+        supervisorStale: 'Stale',
+        supervisorUncertain: 'Outcome uncertain',
+        supervisorPreparing: 'Preparing',
+        supervisorControlRecord: 'Control action',
+        supervisorHistoryStatus: 'Filter by outcome',
+        supervisorHistoryFilterAll: 'All outcomes',
+        supervisorSessionFilter: 'Filter by session',
+        supervisorAllSessions: 'All sessions',
+        supervisorHistoryEmpty: 'No matching monitor records.',
+        supervisorRefreshHistory: 'Refresh history',
+        supervisorHistoryLoading: 'Loading monitor history…',
+        supervisorLoadMore: 'Load more',
+        supervisorLegacyChecks: 'Decisions recorded by the old version (excluded from totals above)',
+        supervisorRetention: 'The latest 1,000 finished records are retained. Totals are not reset when history is trimmed.',
+        supervisorCountHint: 'CLI / SDK counts review attempts; Desktop counts valid replies received.',
+        supervisorDesktopPrompt: 'Review prompt',
+        supervisorEmpty: "Waiting for the next main-session turn to finish. Historical conversations are not started automatically.",
+        supervisorPause: "Pause monitor",
+        supervisorResume: "Resume monitor",
+        supervisorOpen: "Open conversation",
+        supervisorOpenDesktop: "Open Desktop and copy review prompt",
+        supervisorSubmit: "Submit desktop decision",
+        supervisorReply: "Paste the JSON returned by Claude Desktop",
+        supervisorWaiting: "Listening",
+        supervisorOff: "Globally disabled",
+        supervisorUnavailable: "Monitor status unavailable",
+        supervisorPhaseWatching: "Watching",
+        supervisorPhaseReviewing: "Claude reviewing",
+        supervisorPhaseRetrying: "Retry backoff",
+        supervisorPhaseDesktop: "Awaiting desktop response",
+        supervisorPhaseSending: "Sending",
+        supervisorPhaseComplete: "Goal met · monitor stopped",
+        supervisorPhasePaused: "Paused",
+        supervisorPhaseAttention: "Needs inspection",
+        manualAcceptanceToggle: "Show manual acceptance actions (off by default)",
+        acceptanceOptional: "Optional acceptance · off by default",
+        reviewSettings: 'Optional acceptance',
         reviewSettingsHint: 'When enabled, a review choice appears in the original DSH conversation after each turn; the default can hand it straight to Claude.',
         autoPromptToggle: 'Show the review choice after DSH finishes',
         defaultActionLabel: 'Default',
@@ -1188,10 +1350,147 @@ window.__ModuleLoader__.load({
         setDevDocConfirmed(false)
       }, [form.projectDir, devDoc && devDoc.contentHash, devDoc && devDoc.status, devDocDraft])
       const [reviewSettings, setReviewSettings] = useState({
-        autoPrompt: true,
+        manualAcceptance: false,
+        supervision: { enabled: true, engine: 'cli', cooldownMs: 30000, retryBaseMs: 60000, maxRetries: 3, maxNoProgress: 3, maxRounds: 50 },
+        autoPrompt: false,
         defaultAction: 'none',
         dailyBudgetUsd: 5,
       })
+      const [supervisionStatus, setSupervisionStatus] = useState({ items: [] })
+      const [supervisionError, setSupervisionError] = useState('')
+      const [supervisionView, setSupervisionView] = useState('overview')
+      const [settingsDraft, setSettingsDraft] = useState({})
+      const [settingsBusy, setSettingsBusy] = useState(false)
+      const [desktopStatus, setDesktopStatus] = useState(null)
+      const [desktopStatusError, setDesktopStatusError] = useState('')
+      const [desktopBackup, setDesktopBackup] = useState('')
+      const [desktopBusy, setDesktopBusy] = useState(false)
+      const [desktopReplyDraft, setDesktopReplyDraft] = useState(null)
+      const [desktopTaskBusy, setDesktopTaskBusy] = useState('')
+      const [supervisionHistory, setSupervisionHistory] = useState({ items: [], total: 0, nextCursor: '' })
+      const [supervisionHistoryBusy, setSupervisionHistoryBusy] = useState(false)
+      const [supervisionHistoryError, setSupervisionHistoryError] = useState('')
+      const [supervisionFilter, setSupervisionFilter] = useState('')
+      const [supervisionSession, setSupervisionSession] = useState('')
+      const historyRequest = useRef(0)
+      const desktopStatusRequest = useRef(0)
+      const supervisionRequest = useRef(0)
+      async function refreshSupervision() {
+        const version = ++supervisionRequest.current
+        try {
+          const result = await request('/supervision')
+          if (version === supervisionRequest.current) { setSupervisionStatus(result); setSupervisionError('') }
+        } catch (error) { if (version === supervisionRequest.current) setSupervisionError(error.message) }
+      }
+      async function refreshDesktopStatus(force = false) {
+        const version = ++desktopStatusRequest.current
+        try {
+          const result = await request('/supervision/desktop/status' + (force ? '?refresh=1' : ''))
+          if (version === desktopStatusRequest.current) { setDesktopStatus(result); setDesktopStatusError('') }
+        } catch (error) { if (version === desktopStatusRequest.current) setDesktopStatusError(error.message) }
+      }
+      async function loadSupervisionHistory(before = '') {
+        const version = ++historyRequest.current
+        setSupervisionHistoryBusy(true)
+        setSupervisionHistoryError('')
+        if (!before) setSupervisionHistory({ items: [], total: 0, nextCursor: '' })
+        try {
+          const query = new URLSearchParams({ limit: '30', status: supervisionFilter, sessionId: supervisionSession, before })
+          const data = await request('/supervision/history?' + query)
+          if (version === historyRequest.current) setSupervisionHistory((current) => ({ ...data,
+            items: before ? [...new Map([...current.items, ...data.items].map((row) => [row.id, row])).values()] : data.items }))
+        } catch (error) { if (version === historyRequest.current) setSupervisionHistoryError(error.message) }
+        finally { if (version === historyRequest.current) setSupervisionHistoryBusy(false) }
+      }
+      async function configureDesktopBridge() {
+        if (!desktopStatus?.bridgeReady || desktopBusy || !window.confirm(tt('supervisorConfigureConfirm'))) return
+        setDesktopBusy(true)
+        ++desktopStatusRequest.current
+        try {
+          const result = await request('/supervision/desktop/status', { method: 'POST', body: JSON.stringify({ action: 'configure', configPath: desktopStatus.configPath }) })
+          setDesktopStatus(result)
+          if (result.backupPath) setDesktopBackup(result.backupPath)
+          await refreshDesktopStatus(true)
+        } catch (error) { setDesktopStatusError(error.message) }
+        finally { setDesktopBusy(false) }
+      }
+      async function openSupervisorDesktop() {
+        try {
+          await request('/supervision/desktop/open', { method: 'POST', body: '{}' })
+          await refreshDesktopStatus(true)
+        } catch (error) { setDesktopStatusError(error.message) }
+      }
+      useEffect(() => {
+        refreshSupervision()
+        const timer = setInterval(refreshSupervision, 5000)
+        return () => { clearInterval(timer); ++supervisionRequest.current }
+      }, [])
+      const showDesktopStatus = activeWorkspace === 'supervision' && (supervisionView === 'settings' || supervisionStatus.engine === 'desktop')
+      useEffect(() => {
+        if (!showDesktopStatus) return
+        refreshDesktopStatus()
+        const timer = setInterval(() => refreshDesktopStatus(), 5000)
+        return () => { clearInterval(timer); ++desktopStatusRequest.current }
+      }, [showDesktopStatus])
+      useEffect(() => {
+        if (activeWorkspace !== 'supervision' || supervisionView !== 'history') return
+        loadSupervisionHistory()
+        return () => { ++historyRequest.current }
+      }, [activeWorkspace, supervisionView, supervisionFilter, supervisionSession])
+      function editMonitorSetting(key, value) {
+        setSettingsDraft((current) => ({ ...current, [key]: value }))
+      }
+      async function saveMonitorSettings(event) {
+        event.preventDefault()
+        if (settingsBusy) return
+        const patch = { supervision: {} }
+        for (const [key, value] of Object.entries(settingsDraft)) {
+          if (['manualAcceptance', 'autoPrompt', 'defaultAction', 'dailyBudgetUsd'].includes(key)) {
+            patch[key] = key === 'dailyBudgetUsd' ? Number(value) : value
+          } else patch.supervision[key] = key.endsWith('Ms') ? Number(value) * 1000 : key.startsWith('max') ? Number(value) : value
+        }
+        setSettingsBusy(true)
+        try {
+          const result = await saveSettings(patch)
+          setReviewSettings((current) => ({ ...current, ...result }))
+          setSettingsDraft({})
+          setToast(tt('supervisorSaved'))
+          await refreshSupervision()
+        } catch (error) { fail(error.message, error.hint) }
+        finally { setSettingsBusy(false) }
+      }
+      function viewMonitorHistory(sessionId = '') {
+        setSupervisionSession(sessionId)
+        setSupervisionFilter('')
+        setSupervisionView('history')
+      }
+      async function supervisorAction(row, action) {
+        try {
+          await request('/supervision', { method: 'POST', body: JSON.stringify({ sessionId: row.sessionId, action }) })
+          await refreshSupervision()
+        } catch (error) { fail(error.message, error.hint) }
+      }
+      async function desktopSupervisor(row, action) {
+        const requestId = row.pending.id
+        if (desktopTaskBusy) return
+        setDesktopTaskBusy(requestId)
+        try {
+          const result = await request('/supervision/desktop', { method: 'POST', body: JSON.stringify({
+            sessionId: row.sessionId, requestId, action,
+            ...(action === 'submit' ? { decision: desktopReplyDraft?.id === requestId ? desktopReplyDraft.text : '' } : {}),
+          }) })
+          if (action === 'open') await copyBrief(result.prompt, false)
+          else setDesktopReplyDraft((current) => current?.id === requestId ? null : current)
+          await refreshSupervision()
+        } catch (error) { fail(error.message, error.hint) }
+        finally { setDesktopTaskBusy('') }
+      }
+      function supervisorPhase(phase) {
+        const key = { watching: 'supervisorPhaseWatching', reviewing: 'supervisorPhaseReviewing', retrying: 'supervisorPhaseRetrying',
+          'awaiting-desktop': 'supervisorPhaseDesktop', sending: 'supervisorPhaseSending', complete: 'supervisorPhaseComplete',
+          paused: 'supervisorPhasePaused', attention: 'supervisorPhaseAttention' }[phase]
+        return key ? tt(key) : phase
+      }
 
       const update = useCallback((patch) => {
         setForm((current) => ({ ...current, ...patch }))
@@ -1228,6 +1527,8 @@ window.__ModuleLoader__.load({
             if (!stopped && data) {
               setReviewSettings((current) => ({
                 ...current,
+                manualAcceptance: data.manualAcceptance === true,
+                supervision: data.supervision || current.supervision,
                 autoPrompt: typeof data.autoPrompt === 'boolean' ? data.autoPrompt : current.autoPrompt,
                 defaultAction:
                   data.defaultAction === 'claude' || data.defaultAction === 'none'
@@ -1886,6 +2187,181 @@ window.__ModuleLoader__.load({
           return { id, text, conclusion }
         })
       }
+
+      const monitorStats = supervisionStatus.stats
+      const desktopState = desktopStatus?.state || 'unknown'
+      const desktopConnected = desktopState === 'connected'
+      const connectionLabel = tt({
+        connected: 'supervisorConnectionConnected',
+        'running-unconnected': 'supervisorConnectionRunning',
+        'not-running': 'supervisorConnectionStopped',
+      }[desktopState] || 'supervisorConnectionUnknown')
+
+      function renderDesktopConnection() {
+        const detail = desktopStatus?.configError || desktopStatus?.processNote || (desktopStatus && (
+          !desktopStatus.bridgeReady ? tt('supervisorRuntimeMissing')
+            : desktopStatus.needsReload ? tt('supervisorConnectionReload')
+              : !desktopStatus.mcpConfigured && !desktopConnected ? tt('supervisorConnectionMissing') : ''))
+        return h('section', { className: 'cc-monitorBand' },
+          h('div', { className: 'cc-monitorSectionHead' },
+            h('h2', { className: 'cc-cardTitle' }, tt('supervisorConnectionTitle')),
+            h(Chip, { on: desktopConnected, warn: desktopState === 'running-unconnected', label: connectionLabel,
+              hint: desktopStatus?.lastHeartbeatAt && desktopConnected ? timeText(desktopStatus.lastHeartbeatAt) : '' })),
+          detail ? h('p', { className: 'cc-hint' }, detail) : null,
+          desktopStatusError ? h('div', { className: 'cc-inlineWarn', role: 'alert' }, desktopStatusError) : null,
+          desktopStatus?.clientInfo ? h('div', { className: 'cc-meta' }, `${tt('supervisorBridgeClient')}: ${desktopStatus.clientInfo.name} ${desktopStatus.clientInfo.version} · ${desktopStatus.protocolVersion}`) : null,
+          desktopStatus?.configPath ? h('div', { className: 'cc-monitorPath cc-meta' }, `${tt('supervisorBridgePath')}: `, h('code', null, desktopStatus.configPath)) : null,
+          desktopBackup ? h('div', { className: 'cc-monitorPath cc-meta' }, `${tt('supervisorBridgeBackup')}: `, h('code', null, desktopBackup)) : null,
+          h('p', { className: 'cc-hint' }, tt('supervisorConnectionInfo')),
+          h('div', { className: 'cc-actions' },
+            h(Button, { variant: 'ghost', disabled: desktopBusy, onClick: () => refreshDesktopStatus(true) }, tt('supervisorRefreshDesktop')),
+            !desktopStatus?.mcpConfigured ? h(Button, { variant: 'primary', busy: desktopBusy,
+              disabled: desktopBusy || !desktopStatus?.bridgeReady || Boolean(desktopStatus?.configError),
+              onClick: configureDesktopBridge }, tt('supervisorConfigure')) : null,
+            desktopState === 'not-running' ? h(Button, { variant: 'ghost', onClick: openSupervisorDesktop }, tt('supervisorOpenApp')) : null))
+      }
+
+      function renderSupervisionSettings() {
+        const cfg = reviewSettings.supervision
+        const toggle = (key, label, value) => h('label', { className: 'cc-switch' },
+          h('input', { type: 'checkbox', checked: settingsDraft[key] ?? value,
+            onChange: (event) => editMonitorSetting(key, event.target.checked) }), label)
+        const input = (key, label, min, max, step, value) => h('label', { className: 'cc-field', key },
+          h('span', { className: 'cc-label' }, label), h('input', { className: 'cc-input', type: 'number', required: true, min, max, step,
+            value: settingsDraft[key] ?? value, onChange: (event) => editMonitorSetting(key, event.target.value) }))
+        return h('section', { className: 'cc-monitorSettings' },
+          h('form', { onSubmit: saveMonitorSettings, className: 'cc-monitorForm' },
+            h('fieldset', { className: 'cc-monitorBand', disabled: settingsBusy },
+              h('legend', { className: 'cc-cardTitle' }, tt('supervisorSettingsButton')),
+              toggle('enabled', tt('supervisorEnabled'), cfg.enabled),
+              h('label', { className: 'cc-field cc-monitorEngine' }, h('span', { className: 'cc-label' }, tt('supervisorEngineLabel')),
+                h('select', { className: 'cc-select', value: settingsDraft.engine ?? cfg.engine,
+                  onChange: (event) => editMonitorSetting('engine', event.target.value) },
+                  h('option', { value: 'cli' }, tt('supervisorCli')), h('option', { value: 'desktop' }, tt('supervisorDesktop')))),
+              h('div', { className: 'cc-monitorBoundGrid' },
+                input('cooldownMs', tt('supervisorCooldown'), 0, 3600, 0.001, cfg.cooldownMs / 1000),
+                input('retryBaseMs', tt('supervisorRetryDelay'), 1, 3600, 0.001, cfg.retryBaseMs / 1000),
+                input('maxRetries', tt('supervisorMaxRetries'), 0, 5, 1, cfg.maxRetries),
+                input('maxNoProgress', tt('supervisorNoProgress'), 1, 20, 1, cfg.maxNoProgress),
+                input('maxRounds', tt('supervisorMaxRounds'), 1, 1000, 1, cfg.maxRounds),
+                input('dailyBudgetUsd', tt('dailyBudgetLabel'), 0, undefined, 'any', reviewSettings.dailyBudgetUsd))),
+            h('fieldset', { className: 'cc-monitorBand', disabled: settingsBusy },
+              h('legend', { className: 'cc-cardTitle' }, tt('acceptanceOptional')),
+              toggle('manualAcceptance', tt('manualAcceptanceToggle'), reviewSettings.manualAcceptance),
+              toggle('autoPrompt', tt('autoPromptToggle'), reviewSettings.autoPrompt),
+              (settingsDraft.autoPrompt ?? reviewSettings.autoPrompt) ? h('label', { className: 'cc-field cc-monitorEngine' },
+                h('span', { className: 'cc-label' }, tt('defaultActionLabel')),
+                h('select', { className: 'cc-select', value: settingsDraft.defaultAction ?? reviewSettings.defaultAction,
+                  onChange: (event) => editMonitorSetting('defaultAction', event.target.value) },
+                  h('option', { value: 'none' }, tt('defaultActionNone')), h('option', { value: 'claude' }, tt('defaultActionClaude')))) : null),
+            h('div', { className: 'cc-actions' }, h(Button, { type: 'submit', variant: 'primary', busy: settingsBusy,
+              disabled: settingsBusy || !Object.keys(settingsDraft).length }, tt('supervisorSave')))),
+          renderDesktopConnection())
+      }
+
+      function renderSupervisionHistory() {
+        const outcomes = {
+          preparing: 'supervisorPreparing', running: 'supervisorPhaseReviewing',
+          'awaiting-desktop': 'supervisorPending', continued: 'supervisorContinued', complete: 'supervisorCompleted',
+          wait: 'supervisorWaited', failed: 'supervisorFailed', uncertain: 'supervisorUncertain', paused: 'supervisorPhasePaused',
+          cancelled: 'supervisorCancelled', interrupted: 'supervisorInterrupted', stale: 'supervisorStale', control: 'supervisorControlRecord',
+        }
+        const sessionRows = supervisionStatus.items || []
+        return h('section', { className: 'cc-monitorHistoryPage', 'aria-busy': supervisionHistoryBusy },
+          h('div', { className: 'cc-monitorSectionHead cc-monitorFilters' },
+            h('select', { className: 'cc-select', 'aria-label': tt('supervisorHistoryStatus'), value: supervisionFilter,
+              onChange: (event) => setSupervisionFilter(event.target.value) },
+              h('option', { value: '' }, tt('supervisorHistoryFilterAll')),
+              Object.entries(outcomes).map(([value, label]) => h('option', { value, key: value }, tt(label)))),
+            h('select', { className: 'cc-select', 'aria-label': tt('supervisorSessionFilter'), value: supervisionSession,
+              onChange: (event) => setSupervisionSession(event.target.value) },
+              h('option', { value: '' }, tt('supervisorAllSessions')),
+              sessionRows.map((row) => h('option', { key: row.sessionId, value: row.sessionId }, `${row.objective?.slice(0, 48) || row.sessionId} · ${row.sessionId.slice(0, 8)}`))),
+            h(Button, { variant: 'ghost', disabled: supervisionHistoryBusy, onClick: () => loadSupervisionHistory() }, tt('supervisorRefreshHistory'))),
+          supervisionHistoryError ? h('div', { className: 'cc-inlineWarn', role: 'alert' }, supervisionHistoryError) : null,
+          supervisionHistory.items.length ? h('div', { className: 'cc-monitorHistoryList' }, supervisionHistory.items.map((item) =>
+            h('article', { className: 'cc-monitorHistoryItem', key: item.id },
+              h('div', { className: 'cc-monitorHistoryHead' },
+                h('span', { className: 'cc-badge' }, outcomes[item.status] ? tt(outcomes[item.status]) : item.status),
+                h('time', { className: 'cc-meta' }, timeText(item.startedAt)),
+                item.engine ? h('span', { className: 'cc-meta' }, item.engine === 'desktop' ? 'Desktop' : 'CLI / SDK') : null,
+                item.durationMs > 0 ? h('span', { className: 'cc-meta' }, formatDuration(item.durationMs)) : null),
+              h('div', { className: 'cc-monitorHistoryObjective', title: item.sessionId }, item.objective || item.sessionId),
+              item.reason ? h('div', { className: 'cc-monitorReason' }, item.reason) : null,
+              item.note || item.error ? h('div', { className: item.error ? 'cc-inlineWarn' : 'cc-hint' }, item.error || item.note) : null,
+              item.evidence?.length || item.message ? h('details', { className: 'cc-monitorEvidence' },
+                h('summary', null, tt('supervisorEvidence'), item.evidence?.length ? ` (${item.evidence.length})` : ''),
+                item.message ? h('div', { className: 'cc-monitorHistoryMessage' }, item.message) : null,
+                item.evidence?.length ? h('ul', null, item.evidence.map((text, index) => h('li', { key: index }, text))) : null) : null)))
+            : h('div', { className: 'cc-monitorBand cc-hint' }, supervisionHistoryBusy ? tt('supervisorHistoryLoading') : tt('supervisorHistoryEmpty')),
+          h('div', { className: 'cc-monitorSectionHead' },
+            h('span', { className: 'cc-meta' }, `${supervisionHistory.items.length} / ${supervisionHistory.total} · ${tt('supervisorRetention')}`),
+            supervisionHistory.nextCursor ? h(Button, { variant: 'ghost', busy: supervisionHistoryBusy, disabled: supervisionHistoryBusy,
+              onClick: () => loadSupervisionHistory(supervisionHistory.nextCursor) }, tt('supervisorLoadMore')) : null))
+      }
+
+      function renderPendingReview(row) {
+        const { id, prompt } = row.pending
+        const draft = desktopReplyDraft?.id === id ? desktopReplyDraft.text : ''
+        const busy = desktopTaskBusy === id
+        return h('details', { className: 'cc-desktopPending', key: id },
+          h('summary', null, tt('supervisorTask')),
+          desktopConnected ? h('p', { className: 'cc-hint' }, tt('supervisorDesktopHint'), ' ', h('code', null, id)) : null,
+          h('div', { className: 'cc-actions' },
+            h(Button, { variant: 'ghost', busy, disabled: Boolean(desktopTaskBusy), onClick: () => desktopSupervisor(row, 'open') }, tt('supervisorOpenDesktop')),
+            h(Button, { variant: 'link', onClick: () => copyBrief(prompt, false) }, tt('supervisorDesktopPrompt'))),
+          h('details', { className: 'cc-monitorEvidence' }, h('summary', null, tt('supervisorManualReply')),
+            h('label', { className: 'cc-field' }, h('span', { className: 'cc-label' }, tt('supervisorDesktopPrompt')),
+              h('textarea', { className: 'cc-textarea', readOnly: true, value: prompt || '', rows: 3 })),
+            h('label', { className: 'cc-field' }, h('span', { className: 'cc-label' }, tt('supervisorReply')),
+              h('textarea', { className: 'cc-textarea', value: draft, rows: 3, onChange: (event) => setDesktopReplyDraft({ id, text: event.target.value }) })),
+            h(Button, { variant: 'primary', busy, disabled: Boolean(desktopTaskBusy) || !draft.trim(), onClick: () => desktopSupervisor(row, 'submit') }, tt('supervisorSubmit'))))
+      }
+
+      function renderSupervisionOverview() {
+        const rows = supervisionStatus.items || []
+        const tallies = [['executions', 'supervisorExecuted'], ['decisions', 'supervisorDecisions'], ['continued', 'supervisorContinued'],
+          ['completed', 'supervisorCompleted'], ['failed', 'supervisorFailed'], ['pendingDesktop', 'supervisorPending']]
+        return h('section', { className: 'cc-supervisionOverview' },
+          h('div', { className: 'cc-monitorSectionHead' },
+            h(Chip, { on: supervisionStatus.enabled === true, label: supervisionStatus.enabled === undefined ? tt('supervisorUnavailable')
+              : tt(supervisionStatus.enabled ? 'supervisorWaiting' : 'supervisorOff') }),
+            supervisionStatus.engine === 'desktop' ? h(Button, { variant: 'link', onClick: () => setSupervisionView('settings') }, connectionLabel) : null,
+            h(Button, { variant: 'link', onClick: () => viewMonitorHistory() }, `${tt('supervisorHistoryButton')} (${monitorStats?.retainedRecords || 0})`)),
+          h('dl', { className: 'cc-monitorStats', title: tt('supervisorCountHint') }, tallies.map(([key, label]) =>
+            h('div', { className: 'cc-monitorStat', key },
+              h('dt', { className: 'cc-monitorLabel' }, tt(label)),
+              h('dd', { className: 'cc-monitorNumber' }, monitorStats ? Number(monitorStats[key] || 0).toLocaleString() : '—')))),
+          monitorStats?.legacyChecks ? h('div', { className: 'cc-hint' }, `${tt('supervisorLegacyChecks')}: ${monitorStats.legacyChecks}`) : null,
+          rows.length ? h('div', { className: 'cc-sessionMonitorList' }, rows.map((row) => {
+            const resume = ['paused', 'attention', 'complete'].includes(row.phase)
+            return h('article', { className: 'cc-sessionMonitor', key: row.sessionId },
+              h('div', { className: 'cc-monitorSectionHead' },
+                h('span', { className: 'cc-monitorSessionName', title: row.workspace || row.sessionId }, row.objective || row.sessionId),
+                h('span', { className: 'cc-badge' }, supervisorPhase(row.phase))),
+              h('div', { className: 'cc-monitorSessionCounts' }, [[tt('supervisorExecuted'), row.stats?.executions],
+                [tt('supervisorContinued'), row.stats?.continued], [tt('supervisorFailed'), row.stats?.failed]]
+                .map(([label, count]) => `${label} ${count || 0}`).join(' · ')),
+              row.note || row.error ? h('div', { className: row.error ? 'cc-inlineWarn' : 'cc-hint' }, row.error || row.note) : null,
+              h('div', { className: 'cc-monitorSessionActions' },
+                h(Button, { variant: 'link', onClick: () => openSessionNow(row.sessionId) }, tt('supervisorOpen')),
+                h(Button, { variant: 'link', onClick: () => viewMonitorHistory(row.sessionId) }, tt('supervisorHistoryButton')),
+                h(Button, { variant: 'link', disabled: !supervisionStatus.enabled || row.phase === 'sending',
+                  onClick: () => supervisorAction(row, resume ? 'resume' : 'pause') }, tt(resume ? 'supervisorResume' : 'supervisorPause'))),
+              row.phase === 'awaiting-desktop' && row.pending ? renderPendingReview(row) : null)
+          })) : h('div', { className: 'cc-monitorBand cc-hint' }, tt('supervisorEmpty')))
+      }
+
+      function renderSupervisionPage() {
+        return h('div', { className: 'cc-supervisionPage' },
+          h('nav', { className: 'cc-modeTabs cc-monitorNav', 'aria-label': tt('supervisorTitle') },
+            [['overview', 'supervisorOverview'], ['history', 'supervisorHistoryButton'], ['settings', 'supervisorSettingsButton']].map(([key, label]) =>
+              h('button', { type: 'button', key, className: supervisionView === key ? 'on' : '', 'aria-pressed': supervisionView === key,
+                onClick: () => setSupervisionView(key) }, tt(label)))),
+          supervisionError || supervisionStatus.error ? h('div', { className: 'cc-inlineWarn', role: 'alert' }, supervisionError || supervisionStatus.error) : null,
+          supervisionView === 'settings' ? renderSupervisionSettings() : supervisionView === 'history' ? renderSupervisionHistory() : renderSupervisionOverview())
+      }
+
 
       function devDocStatusLabel(status) {
         if (status === 'approved') return tt('devDocApproved')
@@ -2729,7 +3205,7 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'cc-actions' },
             h(Button, { variant: 'primary', onClick: () => openSessionNow(dispatch.sessionId) }, tt('openSession')),
-            h(
+            reviewSettings.manualAcceptance ? h(
               Button,
               {
                 variant: 'ghost',
@@ -2741,7 +3217,7 @@ window.__ModuleLoader__.load({
                   }),
               },
               tt('dshAccept'),
-            ),
+            ) : null,
             h(Button, { variant: 'ghost', onClick: reset }, tt('newProject')),
             h(Button, { variant: 'ghost', onClick: archiveCurrent }, tt('archive')),
           ),
@@ -3044,7 +3520,9 @@ window.__ModuleLoader__.load({
         }
         return labels[label] || label || '最近使用'
       }
-      if (activeWorkspace === 'devdoc') {
+      if (activeWorkspace === 'supervision') {
+        main = renderSupervisionPage()
+      } else if (activeWorkspace === 'devdoc') {
         main = h('div', { className: 'cc-devDocWorkspace' }, renderDevDocView())
       } else if (activeWorkspace === 'continue' && !firstQuestion) {
         main = h(SessionPicker, {
@@ -3155,22 +3633,26 @@ window.__ModuleLoader__.load({
               ['new', tt('workspaceNew')],
               ['continue', tt('workspaceContinue')],
               ['devdoc', tt('devDoc')],
+              ['supervision', tt('supervisorTitle')],
             ].map(([mode, label]) => h(
               'button',
               {
                 type: 'button', key: mode, role: 'tab',
                 'aria-selected': activeWorkspace === mode,
                 className: activeWorkspace === mode ? 'on' : '',
+                title: mode === 'supervision' && monitorStats ? `${tt('supervisorExecuted')}: ${monitorStats.executions}` : undefined,
                 onClick: () => {
                   if (mode === 'devdoc') openDevDoc()
                   else {
                     setActiveWorkspace(mode)
                     setRecordsOpen(false)
+                    if (mode === 'supervision') { setSupervisionView('overview'); refreshSupervision() }
                     if (mode === 'continue') listSessions().then((data) => setAllSessions(data.items || [])).catch(() => {})
                   }
                 },
               },
               label,
+              mode === 'supervision' && monitorStats ? h('span', { className: 'cc-monitorTabCount' }, Number(monitorStats.executions || 0).toLocaleString()) : null,
             )),
           ),
           visibleJobs.length
@@ -3192,78 +3674,7 @@ window.__ModuleLoader__.load({
         ),
         notice ? h(Notice, { notice, tt }) : null,
         main,
-        h(
-          'details',
-          { className: 'cc-card cc-reviewSettings' },
-          h(
-            'summary',
-            { className: 'cc-settingsSummary' },
-            h('span', { className: 'cc-cardTitle' }, tt('reviewSettings')),
-            h('span', { className: 'cc-hint' }, reviewSettings.defaultAction === 'claude' ? tt('defaultActionClaude') : tt('defaultActionNone')),
-          ),
-          h('div', { className: 'cc-reviewSettingsBody' },
-          h(
-            'label',
-            { className: 'cc-switch' },
-            h('input', {
-              type: 'checkbox',
-              checked: Boolean(reviewSettings.autoPrompt),
-              onChange: (event) => {
-                const value = event.target.checked
-                setReviewSettings((current) => ({ ...current, autoPrompt: value }))
-                saveSettings({ autoPrompt: value }).catch(() => {})
-              },
-            }),
-            tt('autoPromptToggle'),
-          ),
-          h(
-            'label',
-            { className: 'cc-field' },
-            h('span', { className: 'cc-label' }, tt('defaultActionLabel')),
-            h(
-              'select',
-              {
-                className: 'cc-select',
-                value: reviewSettings.defaultAction,
-                onChange: (event) => {
-                  const value = event.target.value
-                  setReviewSettings((current) => ({ ...current, defaultAction: value }))
-                  saveSettings({ defaultAction: value }).catch(() => {})
-                },
-              },
-              h('option', { value: 'none' }, tt('defaultActionNone')),
-              h('option', { value: 'claude' }, tt('defaultActionClaude')),
-            ),
-          ),
-          h(
-            'details',
-            { className: 'cc-advanced' },
-            h('summary', null, tt('advancedSettings')),
-            h(PromptEditor, { ids: ['review', 'judge', 'judgeSystem', 'acceptanceBrief', 'acceptanceFallback', 'terminalReview', 'terminalSystem'], tt }),
-            h(
-              'label',
-              { className: 'cc-field cc-budgetField' },
-              h('span', { className: 'cc-label' }, tt('dailyBudgetLabel')),
-              h('input', {
-                className: 'cc-input',
-                type: 'number',
-                min: 0,
-                step: 0.5,
-                value: reviewSettings.dailyBudgetUsd,
-                onChange: (event) => {
-                  const value = Number(event.target.value)
-                  const next = Number.isFinite(value) && value >= 0 ? value : 0
-                  setReviewSettings((current) => ({ ...current, dailyBudgetUsd: next }))
-                  saveSettings({ dailyBudgetUsd: next }).catch(() => {})
-                  refreshUsage()
-                },
-              }),
-              h('span', { className: 'cc-hint' }, tt('dailyBudgetHint')),
-            ),
-          ),
-          ),
-        ),
-        h(
+        activeWorkspace !== 'supervision' && h(
           'details',
           { className: 'cc-historyDetails' },
           h('summary', null, `${tt('history')}（${history.length}）`),
@@ -3313,7 +3724,7 @@ window.__ModuleLoader__.load({
                           tt('historyOpen'),
                         )
                       : h('span', { className: 'cc-historyMuted' }, tt('noHistorySession')),
-                    entry.sessionId
+                    entry.sessionId && reviewSettings.manualAcceptance
                       ? h(
                           Button,
                           {
@@ -4258,11 +4669,11 @@ window.__ModuleLoader__.load({
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 14px;
   block-size: 100%;
   min-block-size: 0;
   overflow: auto;
-  padding: 30px clamp(18px, 3.4vw, 44px) 72px;
+  padding: 18px clamp(14px, 2.6vw, 32px) 48px;
   background: var(--cc-cream);
   color: var(--cc-ink);
   font-family: var(--cc-sans);
@@ -4277,6 +4688,8 @@ body:not([data-ds-dark-theme]) .cc-panel { color-scheme: light; }
 body[data-ds-dark-theme] .cc-panel { color-scheme: dark; }
 
 .cc-panel > * {
+  box-sizing: border-box;
+  min-inline-size: 0;
   inline-size: 100%;
   max-inline-size: 1060px;
   margin-inline: auto;
@@ -4300,10 +4713,10 @@ body[data-dsh-claude-style] .cc-panel {
 
 .cc-hero {
   display: flex;
-  align-items: flex-start;
-  gap: 16px;
+  align-items: center;
+  gap: 12px;
   flex-wrap: wrap;
-  padding: 22px 24px;
+  padding: 12px 16px;
   border: 1px solid var(--cc-line);
   border-radius: var(--cc-r-lg);
   background: var(--cc-paper);
@@ -5114,6 +5527,81 @@ body[data-dsh-claude-style] .cc-panel {
   background: var(--cc-paper-2);
 }
 
+/* ---------- global supervision ---------- */
+
+.cc-monitorTabCount {
+  display: inline-block;
+  min-inline-size: 1.2em;
+  margin-inline-start: .45em;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--cc-accent-strong);
+}
+.cc-supervisionPage,
+.cc-supervisionOverview,
+.cc-monitorSettings,
+.cc-monitorForm,
+.cc-monitorHistoryPage { display: grid; gap: 12px; min-inline-size: 0; }
+.cc-monitorNav { justify-self: start; max-inline-size: 100%; box-sizing: border-box; }
+.cc-monitorBand,
+.cc-sessionMonitor,
+.cc-monitorHistoryItem { padding: 10px 12px; min-inline-size: 0; overflow-wrap: anywhere; }
+.cc-monitorBand { margin: 0; border: 0; border-block: 1px solid var(--cc-line); }
+.cc-monitorBand > legend { padding-inline-end: 8px; }
+.cc-monitorBand > * + *,
+.cc-desktopPending > * + *,
+.cc-monitorEvidence > * + * { margin-block-start: 8px; }
+.cc-monitorBand > p,
+.cc-desktopPending > p { margin-block-end: 0; }
+.cc-monitorSectionHead,
+.cc-monitorHistoryHead,
+.cc-monitorSessionActions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.cc-monitorSectionHead .cc-cardTitle,
+.cc-monitorSectionHead .cc-monitorSessionName { margin-inline-end: auto; }
+.cc-monitorSectionHead > *,
+.cc-monitorHistoryHead > * { max-inline-size: 100%; }
+.cc-monitorStats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 105px), 1fr));
+  margin: 0;
+  background: var(--cc-paper);
+  border: 1px solid var(--cc-line);
+  border-radius: var(--cc-r-sm);
+  overflow: hidden;
+}
+.cc-monitorStat { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; min-inline-size: 0; }
+.cc-monitorLabel { color: var(--cc-ink-2); font-size: 11.5px; overflow-wrap: anywhere; }
+.cc-monitorNumber { margin: 0; font-size: 19px; font-weight: 600; line-height: 1.25; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.cc-sessionMonitorList,
+.cc-monitorHistoryList { background: var(--cc-paper); border: 1px solid var(--cc-line); border-radius: var(--cc-r-sm); }
+.cc-sessionMonitor + .cc-sessionMonitor,
+.cc-monitorHistoryItem + .cc-monitorHistoryItem { border-block-start: 1px solid var(--cc-line); }
+.cc-sessionMonitor,
+.cc-monitorHistoryItem { display: grid; gap: 5px; }
+.cc-monitorSessionName,
+.cc-monitorHistoryObjective { font-weight: 600; }
+.cc-monitorSessionCounts { color: var(--cc-ink-2); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.cc-monitorHistoryMessage { white-space: pre-wrap; }
+.cc-monitorFilters .cc-select { flex: 0 1 230px; min-inline-size: 0; }
+.cc-monitorEvidence,
+.cc-desktopPending { border-block-start: 1px solid var(--cc-line); padding-block-start: 4px; }
+.cc-monitorEvidence > summary,
+.cc-desktopPending > summary { padding-block: 4px; cursor: pointer; color: var(--cc-ink-2); }
+.cc-monitorEvidence > ul { padding-inline-start: 18px; }
+.cc-monitorBoundGrid {
+  display: grid;
+  gap: 8px 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 146px), 1fr));
+}
+.cc-monitorEngine { max-inline-size: 360px; }
+.cc-monitorPath { overflow-wrap: anywhere; }
+.cc-monitorPath code { font-family: var(--cc-mono); }
+.cc-supervisionPage .cc-actions { gap: 6px; }
+.cc-supervisionPage :is(.cc-select, .cc-input) { padding: 6px 8px; }
+.cc-supervisionPage .cc-btn.link { min-block-size: 26px; padding-block: 2px; }
+.cc-modeTabs button:focus-visible,
+.cc-supervisionPage summary:focus-visible { outline: 2px solid var(--cc-accent-strong); outline-offset: 2px; }
+
 /* ---------- scrollbars ---------- */
 
 .cc-panel,
@@ -5135,8 +5623,16 @@ body[data-dsh-claude-style] .cc-panel {
 
 @container (max-width: 760px) {
   .cc-grid { grid-template-columns: 1fr; }
-  .cc-hero { padding: 18px; }
-  .cc-chips { justify-content: flex-start; margin-inline-start: 0; max-inline-size: 100%; }
+  .cc-hero { align-items: flex-start; padding: 14px 16px; }
+  .cc-heroText { flex-basis: min(100%, 300px); }
+  .cc-chips {
+    inline-size: 100%;
+    min-inline-size: 0;
+    justify-content: flex-start;
+    margin-inline-start: 0;
+    max-inline-size: 100%;
+  }
+  .cc-chip { max-inline-size: 100%; }
   .cc-modeTabs { flex-wrap: wrap; border-radius: var(--cc-r-md); }
   .cc-modeTabs button { flex: 1 1 auto; }
   .cc-seg { grid-template-columns: 1fr; }

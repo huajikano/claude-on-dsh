@@ -344,3 +344,88 @@ test('requests carry a timeout signal and map aborts to a readable error', async
     globalThis.fetch = originalFetch
   }
 })
+
+function monitorHarness(activeWorkspace = 'new', extraProps = {}) {
+  const state = []
+  const draw = () => {
+    hookState = state
+    hookIndex = 0
+    try { return renderWithState() } finally { hookState = null }
+  }
+  function renderWithState() {
+    snapshot = JSON.stringify({ v: 1, savedAt: Date.now(), activeWorkspace })
+    return panel({ ...props, ...extraProps })
+  }
+  draw()
+  return { draw, setStatus: (status) => { state[state.findIndex((value) => value && Array.isArray(value.items) && !('total' in value))] = status } }
+}
+const monitorButton = (tree, label) => findNodes(tree, (node) => node.type === 'button' && contains(node, label))[0]
+
+test('home has one compact monitor entry; optional acceptance is off in monitor settings', () => {
+  const home = monitorHarness()
+  home.setStatus({ enabled: true, stats: { executions: 12 }, items: [] })
+  const tree = home.draw()
+  const entry = findNodes(tree, (node) => node.props?.role === 'tab' && contains(node, 'Claude 全局监工'))
+  assert.equal(entry.length, 1)
+  assert.equal(entry[0].props.title, '累计执行: 12')
+  assert.equal(contains(tree, '全局自动监工'), false)
+  assert.equal(findNodes(tree, (node) => node.props?.className === 'cc-supervisionPage').length, 0)
+  const monitor = monitorHarness('supervision')
+  monitorButton(monitor.draw(), '监工设置').props.onClick()
+  const settings = monitor.draw()
+  assert.ok(contains(settings, '全局自动监工'))
+  const manual = findNodes(settings, (node) => node.type === 'label' && contains(node, '显示手动验收入口'))[0]
+  assert.equal(findNodes(manual, (node) => node.type === 'input')[0].props.checked, false)
+})
+
+test('monitor settings wait for explicit save and convert seconds once', async (t) => {
+  const patches = []
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ items: [] })))
+  const h = monitorHarness('supervision', { saveSettings: async (patch) => { patches.push(patch); return {} } })
+  monitorButton(h.draw(), '监工设置').props.onClick()
+  const tree = h.draw()
+  const field = findNodes(tree, (node) => node.type === 'label' && contains(node, '续跑间隔（秒）'))[0]
+  const input = findNodes(field, (node) => node.type === 'input')[0]
+  assert.equal(input.props.value, 30)
+  input.props.onChange({ target: { value: '15.125' } })
+  assert.deepEqual(patches, [])
+  const form = findNodes(h.draw(), (node) => node.props?.className === 'cc-monitorForm')[0]
+  await form.props.onSubmit({ preventDefault() {} })
+  assert.deepEqual(patches, [{ supervision: { cooldownMs: 15125 } }])
+})
+
+test('session history requests only the selected session and outcome', async (t) => {
+  let query
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    query = new URL(url).searchParams
+    return new Response(JSON.stringify({ items: [{ id: 'audit-1', status: 'failed', objective: '查明构建失败原因', reason: '测试未通过' }], total: 1 }))
+  })
+  const h = monitorHarness('supervision')
+  h.setStatus({ enabled: true, items: [{ sessionId: 'session-a', phase: 'watching', objective: '检查项目' }] })
+  const row = findNodes(h.draw(), (node) => node.props?.className === 'cc-sessionMonitor')[0]
+  monitorButton(row, '监工记录').props.onClick()
+  let tree = h.draw()
+  const filter = findNodes(tree, (node) => node.props?.['aria-label'] === '按结果筛选')[0]
+  filter.props.onChange({ target: { value: 'failed' } })
+  await monitorButton(h.draw(), '刷新记录').props.onClick()
+  assert.equal(query.get('sessionId'), 'session-a')
+  assert.equal(query.get('status'), 'failed')
+  tree = h.draw()
+  assert.ok(contains(tree, '测试未通过'))
+})
+
+test('desktop tasks use the pending request id, not the session id, for manual drafts', () => {
+  const h = monitorHarness('supervision')
+  const row = { sessionId: 'desktop-demo', phase: 'awaiting-desktop', objective: '检查项目进度', pending: { id: 'r1', prompt: 'WAITING DESKTOP PROMPT' } }
+  h.setStatus({ enabled: true, engine: 'desktop', items: [row] })
+  let tree = h.draw()
+  assert.ok(contains(tree, '等待桌面回复'))
+  assert.ok(contains(tree, '提交桌面 Claude 判断'))
+  const prompt = findNodes(tree, (node) => node.type === 'textarea' && node.props.value === 'WAITING DESKTOP PROMPT')[0]
+  assert.equal(prompt.props.readOnly, true)
+  findNodes(tree, (node) => node.type === 'textarea' && !node.props.readOnly && typeof node.props.onChange === 'function').at(-1).props.onChange({ target: { value: 'OLD REPLY' } })
+  assert.equal(monitorButton(h.draw(), '提交桌面 Claude 判断').props.disabled, false)
+  h.setStatus({ enabled: true, engine: 'desktop', items: [{ ...row, pending: { id: 'r2', prompt: 'NEW PROMPT' } }] })
+  tree = h.draw()
+  assert.equal(monitorButton(tree, '提交桌面 Claude 判断').props.disabled, true)
+})

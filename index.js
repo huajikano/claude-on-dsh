@@ -19,6 +19,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { attachAcceptance } from './lib/acceptance/host.js'
 import { attachReviewPrompt } from './lib/acceptance/review.js'
+import { attachSupervision } from './lib/supervision.js'
+import { DesktopSupervisionBridge, desktopConnectionState, probeClaudeDesktop, desktopConfigCandidates, desktopNodeExecutable } from './lib/desktop-supervision-bridge.js'
+import { fileURLToPath } from 'node:url'
+import { buildSupervisionPrompt, migrateWorkflowSettings, supervisionSettings, SUPERVISION_SCHEMA } from './lib/supervision-policy.js'
+import { redact } from './lib/acceptance/contract.js'
 import { executeAcceptance } from './lib/acceptance/kernel.js'
 import { extractTask, buildFacts, recentConversation } from './lib/acceptance/facts.js'
 import { buildSessionPrompt, lastAssistantText, parseSessionAnswer } from './lib/first-question-session.js'
@@ -189,6 +194,7 @@ const CLAUDE_LABELS = {
   acceptance: '验收判定',
   review: '验收意见',
   devdoc: '开发文档预审',
+  supervision: '项目监工',
 }
 
 /** The exact user-facing pair for a killed call, kept pure so it is testable. */
@@ -613,12 +619,13 @@ export function planningPermissionMode(requested, fallback) {
   return normalizeMode(fallback, 'plan')
 }
 
-function cliArgs({ permissionMode, schema, model, systemPrompt, resume }) {
+function cliArgs({ permissionMode, schema, model, systemPrompt, resume, readOnly = false }) {
   const args = ['-p', '--output-format', 'json', '--permission-mode', permissionMode]
   if (schema) args.push('--json-schema', JSON.stringify(schema))
   if (model) args.push('--model', model)
   if (systemPrompt) args.push('--append-system-prompt', systemPrompt)
   if (resume) args.push('--resume', resume)
+  if (readOnly) args.push('--tools', 'Read,Glob,Grep', '--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers: {} }))
   return args
 }
 
@@ -644,7 +651,7 @@ function apiHint(stderr, proxy) {
  * @returns {{ promise: Promise<{data: object, meta: object}>, cancel: () => void }}
  */
 function startClaudeRun({ executable, prompt, cwd, schema, systemPrompt, permissionMode, model, resume, timeoutMs, proxy, label }) {
-  const command = spawnCommand(executable, cliArgs({ permissionMode, schema, model, systemPrompt, resume }))
+  const command = spawnCommand(executable, cliArgs({ permissionMode, schema, model, systemPrompt, resume, readOnly: label === 'supervision' }))
   const child = spawn(command.file, command.args, {
     cwd,
     env: childEnv(),
@@ -1174,9 +1181,9 @@ export function apply(ctx, config = {}) {
 
   const acceptanceSettingsFile = path.join(dshHome(), 'claude-on-dsh', 'settings.json')
   const acceptanceSettings = {
-    autoAcceptance: true,
-    manualAcceptance: true,
-    autoPrompt: true,
+    autoAcceptance: false,
+    manualAcceptance: false,
+    autoPrompt: false,
     defaultAction: 'none',
     dailyBudgetUsd: 5,
   }
@@ -1186,7 +1193,13 @@ export function apply(ctx, config = {}) {
       JSON.parse(readFileSync(acceptanceSettingsFile, 'utf8').replace(/^\uFEFF/, '')),
     )
   } catch {}
-  if (typeof acceptanceSettings.autoPrompt !== 'boolean') acceptanceSettings.autoPrompt = true
+  Object.assign(acceptanceSettings, migrateWorkflowSettings({
+    ...acceptanceSettings,
+    supervision: { ...(config.supervision || {}), ...(acceptanceSettings.supervision || {}) },
+  }, {
+    manualAcceptance: config.acceptance?.manualAcceptance,
+    supervision: config.supervision,
+  }))
   if (!['claude', 'none'].includes(acceptanceSettings.defaultAction)) {
     acceptanceSettings.defaultAction = 'none'
   }
@@ -1299,7 +1312,9 @@ export function apply(ctx, config = {}) {
     }
     const key = projectKey(cwd)
     const sessions = await readClaudeSessions()
-    let resume = sessions[key] && sessions[key].sessionId
+    // Monitoring is an independent read-only query, not a continuation of the
+    // planner's conversation. Never mix supervision turns into its resume map.
+    let resume = label === 'supervision' ? '' : sessions[key] && sessions[key].sessionId
     const engine = await engineFor()
     const native = options.executable === SDK_SENTINEL ? '' : options.executable || ''
     const pending = claudeTimeoutMessage(label, options.timeoutMs)
@@ -1315,11 +1330,12 @@ export function apply(ctx, config = {}) {
           executable: native,
           timeoutMs: options.timeoutMs,
           disallowedTools: settings.planningDenyTools,
+          readOnly: label === 'supervision',
           loadSdk: sdkLoader,
           makeTimeoutError: () => userError(pending.message, pending.hint, 504),
           makeCancelError: () => userError('已取消本次 Claude 调用', '', 409),
         })
-      : startClaudeRun({ ...options, cwd, resume: resumeId })
+      : startClaudeRun({ ...options, cwd, resume: resumeId, label })
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const run = attemptRun(resume)
@@ -1332,7 +1348,7 @@ export function apply(ctx, config = {}) {
             label || 'other',
           )
         } catch {}
-        if (sessionId) {
+        if (sessionId && label !== 'supervision') {
           try {
             await rememberClaudeSession(key, {
               sessionId,
@@ -1402,7 +1418,7 @@ export function apply(ctx, config = {}) {
     },
   })
 
-  if (legacyGate) acceptance.setAuto(acceptanceSettings.autoAcceptance)
+  if (legacyGate) acceptance.setAuto(acceptanceSettings.autoAcceptance && !acceptanceSettings.supervision.enabled)
 
   /**
    * The presets a new Session may start in. Absent on hosts without a preset
@@ -1478,6 +1494,9 @@ export function apply(ctx, config = {}) {
   }
 
   async function runManualAcceptance(sessionId, opinion = '', onCancel) {
+    if (!acceptanceSettings.manualAcceptance) {
+      throw userError('手动验收入口已关闭', '可在「可选验收」设置中显式开启；全局监工是默认的项目进度流程。', 403)
+    }
     const inspected = await readSession(ctx, sessionId, AbortSignal.timeout(60_000))
     const workspace = inspected.meta && inspected.meta.cwd
     if (!workspace) throw userError('会话缺少 workspace，无法验收', '', 400)
@@ -1771,7 +1790,10 @@ export function apply(ctx, config = {}) {
 
   const reviewPrompt = attachReviewPrompt({
     ctx,
-    getSettings: () => acceptanceSettings,
+    getSettings: () => ({ ...acceptanceSettings,
+      // One owner per after-turn automation: supervision wins while enabled.
+      autoPrompt: acceptanceSettings.autoPrompt && !acceptanceSettings.supervision.enabled,
+    }),
     isOverBudget,
     runReview,
     logger: (line) => {
@@ -1782,6 +1804,104 @@ export function apply(ctx, config = {}) {
       }
     },
   })
+
+  const desktopBridge = new DesktopSupervisionBridge({ home: path.resolve(dshHome()) })
+  const desktopEntry = fileURLToPath(new URL('./bin/desktop-supervision-mcp.mjs', import.meta.url))
+  let desktopProcessCache = { at: 0, value: null }, desktopProbe
+  async function desktopConnectionInfo(force = false) {
+    if (force || !desktopProcessCache.value || Date.now() - desktopProcessCache.at > 15_000) {
+      desktopProbe ||= probeClaudeDesktop({ appPath: expand(settings.desktopAppPath) }).then((value) => {
+        desktopProcessCache = { at: Date.now(), value }
+      }).finally(() => { desktopProbe = null })
+      await desktopProbe
+    }
+    const application = desktopProcessCache.value
+    const appPath = (application.processes.find((item) => item.hasWindow) || application.processes[0])?.path || findDesktop(settings.desktopAppPath).path
+    const configPath = desktopConfigCandidates({ appPath, explicit: expand(config.desktopConfigPath) })[0] || ''
+    const nodePath = desktopNodeExecutable(desktopBridge.home, expand(config.desktopBridgeNodePath))
+    const entryPath = isFile(desktopEntry) ? desktopEntry : ''
+    const configuration = configPath ? desktopBridge.configuration(configPath, nodePath, entryPath) : { configured: false, configPath }
+    return { ...desktopConnectionState({ application, configuration, connection: desktopBridge.connection(), nodePath, entryPath }), nodePath, entryPath }
+  }
+  const supervisor = attachSupervision({
+    ctx,
+    file: path.join(dshHome(), 'claude-on-dsh', 'supervision.json'),
+    getSettings: () => acceptanceSettings.supervision,
+    isBusy: (id) => {
+      const agent = ctx.agents?.get?.(id)
+      const live = ctx.sessions?.get?.(id)
+      return agent?.status === 'running' || live?.status === 'running'
+    },
+    overBudget: isOverBudget,
+    inspect: async (id) => {
+      const inspected = await readSession(ctx, id, AbortSignal.timeout(60_000))
+      const agent = ctx.agents?.get?.(id)
+      const goals = typeof ctx.get === 'function' ? ctx.get('goals') : ctx.goals
+      let goal = null
+      if (agent && typeof goals?.get === 'function') goal = await goals.get(agent)
+      return { ...inspected, goal }
+    },
+    review: async (snapshot, request) => {
+      const facts = await buildFacts({ sessionId: snapshot.sessionId, workspace: snapshot.workspace,
+        meta: { cwd: snapshot.workspace }, events: snapshot.calls })
+      const context = {
+        changedFiles: facts.changedFiles.slice(0, 40),
+        git: facts.git,
+        commands: facts.commands.slice(-12),
+        // Everything submitted is redacted; filesystem access remains read-only.
+        limits: 'Only supplied transcript excerpts and read-only repository evidence are available.',
+      }
+      const prompt = redact(buildSupervisionPrompt(snapshot, context))
+      if (request.engine === 'desktop') return { pendingDesktop: true, prompt }
+      const executable = engineExecutable()
+      if (!executable) throw userError('Claude 监工未找到可用 CLI / SDK', '', 500)
+      const result = await runClaudeFor({
+        executable, prompt, cwd: snapshot.workspace, schema: SUPERVISION_SCHEMA,
+        permissionMode: 'plan', model: settings.model,
+        systemPrompt: '你是只读项目监工。必须按照 schema 返回判断，不执行项目开发，不修改任何文件。',
+        timeoutMs: reviewTimeoutMs, proxy: proxyInfo(), label: 'supervision', onCancel: request.onCancel,
+      })
+      return result.data
+    },
+    send: async (id, message, requestId) => ctx.sessionController.prompt({
+      sessionId: id, requestId, mode: 'queue',
+      content: [{ type: 'text', text: message }],
+      clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }, AbortSignal.timeout(60_000)),
+    resumeGoal: async (id, expected) => {
+      const goals = typeof ctx.get === 'function' ? ctx.get('goals') : ctx.goals
+      const agent = ctx.agents?.get?.(id)
+      if (!agent || typeof goals?.get !== 'function') return false
+      const current = await goals.get(agent)
+      if (!current) return false
+      if (current.id !== expected.id || current.revision !== expected.revision) throw new Error('原生目标已更新，未恢复旧目标')
+      if (current.phase === 'complete') throw new Error('原生目标已完成，监工未重新启动它')
+      if (current.phase === 'active' && current.activation === 'armed') return 'already-active'
+      if (typeof goals.resume !== 'function') return false
+      await goals.resume(agent, { id: current.id, revision: current.revision })
+      return true
+    },
+    completeGoal: async (id, expected) => {
+      const goals = typeof ctx.get === 'function' ? ctx.get('goals') : ctx.goals
+      const agent = ctx.agents?.get?.(id)
+      if (!agent || typeof goals?.get !== 'function') return
+      const current = await goals.get(agent)
+      if (!current || current.phase === 'complete') return
+      if (current.id !== expected.id || current.revision !== expected.revision) throw new Error('原生目标已更新，未完成旧目标')
+      if (typeof goals.complete === 'function') await goals.complete(agent, { id: current.id, revision: current.revision })
+    },
+    logger: (line) => ctx.logger?.info?.(line),
+  })
+  ctx.effect(() => {
+    const timer = setInterval(() => {
+      if (acceptanceSettings.supervision.enabled && acceptanceSettings.supervision.engine === 'desktop') {
+        desktopBridge.drain((id, requestId, decision) => supervisor.submitDesktop(id, requestId, decision))
+          .catch((error) => ctx.logger?.warn?.(`[claude-on-dsh:desktop] ${error.message}`))
+      }
+    }, 1000)
+    timer.unref?.()
+    return () => clearInterval(timer)
+  }, 'claude-on-dsh: desktop review mailbox')
 
   /**
    * Resolve when a Session's turn ends: `running` seen, then `idle`. Mirrors the
@@ -1844,6 +1964,8 @@ export function apply(ctx, config = {}) {
       workspaceId: workspace.id,
       ...(preset ? { agentPreset: preset } : {}),
     })
+    // Planning-only conversations must not be interpreted as stopped projects.
+    await supervisor.exclude(created.sessionId)
     if (typeof onCancel === 'function') {
       onCancel(() => {
         try {
@@ -2488,6 +2610,12 @@ export function apply(ctx, config = {}) {
       throw userError('DSH 已创建会话，但无法激活它', '请重试；若持续出现，请重启 DSH。', 500)
     }
 
+    await supervisor.bind(created.sessionId, {
+      objective: text(payload.goal).trim() || brief,
+      workspace: projectDir,
+      engine: payload.engine,
+    })
+
     // Full access = the danger-full-access preset: danger-full-access sandbox
     // plus approval 'never'. Pin it before the first prompt so the first turn
     // already runs without approval prompts.
@@ -2732,6 +2860,12 @@ export function apply(ctx, config = {}) {
         throw userError('无法启动 Claude 桌面版', messageOf(error))
       }
     }
+  }
+
+  async function openDesktopForSupervision() {
+    const application = await probeClaudeDesktop({ appPath: expand(settings.desktopAppPath) })
+    const running = application.processes.find((item) => item.hasWindow) || application.processes[0]
+    return running ? { pid: running.pid, path: running.path, alreadyRunning: true } : openDesktop()
   }
 
   function openCcSwitch() {
@@ -3355,6 +3489,66 @@ export function apply(ctx, config = {}) {
       }),
     },
     {
+      path: '/supervision/history',
+      methods: ['GET'],
+      handler: endpoint(async (request) => {
+        const query = new URL(request.url).searchParams
+        return json(supervisor.history({ sessionId: query.get('sessionId') || '', status: query.get('status') || '',
+          before: query.get('before') || '', offset: query.get('offset'), limit: query.get('limit') }))
+      }),
+    },
+    {
+      path: '/supervision/desktop/status',
+      methods: ['GET', 'POST'],
+      handler: endpoint(async (request) => {
+        const info = await desktopConnectionInfo(request.method === 'POST' || new URL(request.url).searchParams.get('refresh') === '1')
+        if (request.method === 'GET') return json(info)
+        const body = await readBody(request)
+        if (body.action !== 'configure') throw userError('无效连接操作', '', 400)
+        if (body.configPath && body.configPath !== info.configPath) throw userError('桌面配置位置已变化，请刷新后确认。', '', 409)
+        const result = await desktopBridge.install(info)
+        return json({ ...await desktopConnectionInfo(), ...result })
+      }),
+    },
+    {
+      path: '/supervision',
+      methods: ['GET', 'POST'],
+      handler: endpoint(async (request) => {
+        if (request.method === 'POST') {
+          const body = await readBody(request)
+          const id = text(body.sessionId).trim()
+          if (!id) throw userError('缺少监工会话 id', '', 400)
+          if (!['pause', 'resume'].includes(body.action)) throw userError('无效监工操作', '', 400)
+          return json({ item: await supervisor.control(id, body.action) })
+        }
+        return json({ ...supervisor.list(), desktop: desktopBridge.connection() })
+      }),
+    },
+    {
+      path: '/supervision/desktop/open',
+      methods: ['POST'],
+      handler: endpoint(async () => json(await openDesktopForSupervision())),
+    },
+    {
+      path: '/supervision/desktop',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        const id = text(body.sessionId).trim()
+        const pending = supervisor.pending(id)
+        if (!pending || pending.id !== body.requestId) throw userError('桌面监工任务已失效', '', 409)
+        if (body.action === 'open') return json({ prompt: pending.prompt, desktop: await openDesktopForSupervision() })
+        if (body.action !== 'submit') throw userError('无效桌面监工操作', '', 400)
+        let decision = body.decision
+        if (typeof decision === 'string') {
+          try { decision = JSON.parse(decision.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '')) }
+          catch { throw userError('请粘贴 Claude 桌面版返回的完整 JSON', '', 400) }
+        }
+        try { return json({ item: await supervisor.submitDesktop(id, body.requestId, decision) }) }
+        catch (error) { throw userError(error.message, '', 409) }
+      }),
+    },
+    {
       path: '/settings',
       methods: ['GET', 'POST'],
       handler: endpoint(async (request) => {
@@ -3379,13 +3573,18 @@ export function apply(ctx, config = {}) {
           ) {
             acceptanceSettings.dailyBudgetUsd = body.dailyBudgetUsd
           }
+          if (body.supervision && typeof body.supervision === 'object') {
+            acceptanceSettings.supervision = supervisionSettings({ ...acceptanceSettings.supervision, ...body.supervision })
+          }
+          acceptanceSettings.workflowVersion = 2
           await mkdir(path.dirname(acceptanceSettingsFile), { recursive: true })
           await writeFile(
             acceptanceSettingsFile,
             `${JSON.stringify(acceptanceSettings, null, 2)}\n`,
             'utf8',
           )
-          acceptance.setAuto(legacyGate && acceptanceSettings.autoAcceptance)
+          acceptance.setAuto(legacyGate && acceptanceSettings.autoAcceptance && !acceptanceSettings.supervision.enabled)
+          await supervisor.refresh()
         }
         return json(acceptanceSettings)
       }),

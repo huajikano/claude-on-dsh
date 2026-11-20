@@ -8,6 +8,8 @@
 # Optional row config (all fields have working defaults):
 #   claudeCliPath   native claude.exe path; empty auto-detects the npm install
 #   desktopAppPath  Claude Desktop claude.exe path; empty auto-detects WindowsApps
+#   desktopConfigPath  override Claude Desktop's MCP configuration file location
+#   desktopBridgeNodePath  override the Node executable used by the Desktop MCP server
 #   ccSwitchPath    CC Switch executable used by the desktop app's proxy
 #   permissionMode  plan | dontAsk | acceptEdits | bypassPermissions | auto
 #   permissionPreset danger-full-access (full access) or another configured preset
@@ -50,6 +52,16 @@
         claudePresetIds:
           - claude
         firstQuestionInSession: false
+        # Only new root-session turn endings are monitored. Desktop mode uses
+        # a local MCP tool connection (or manual reply), not automatic chat input.
+        supervision:
+          enabled: true
+          engine: cli
+          cooldownMs: 30000
+          retryBaseMs: 60000
+          maxRetries: 3
+          maxNoProgress: 3
+          maxRounds: 50
         acceptance:
           legacyGate: false
           gatePolicy: off
