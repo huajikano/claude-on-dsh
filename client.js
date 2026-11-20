@@ -172,6 +172,30 @@ window.__ModuleLoader__.load({
         sessionReset: '重置',
         sessionResetConfirm: '重置当前 Claude 会话映射？下次 Claude 调用会新建会话，旧会话文件保留。',
         sessionResetDone: '已重置 Claude 会话',
+         sessionFork: 'Fork',
+         sessionForkConfirm: '下次 Claude 调用将基于当前会话创建新分支，原会话保持不变。继续？',
+         sessionForkPending: '下次调用将 Fork',
+         sessionForkDone: '已标记下次调用 Fork',
+         claudeStatusTitle: 'Claude 状态',
+         claudeStatusRunning: '插件调用中',
+         claudeStatusIdle: '空闲，可继续当前会话',
+         claudeStatusNew: '已就绪，尚未建立项目会话',
+         claudeStatusUnavailable: '没有可用的 Claude 引擎',
+         claudeStatusUnknown: '状态未知',
+         claudeStatusEngine: '当前引擎',
+         claudeStatusSession: '当前会话',
+         claudeStatusTask: '当前任务',
+         claudeStatusLastUse: '最近用途',
+         claudeStatusSource: '状态来源',
+         claudeStatusPlugin: '本插件调用',
+         claudeStatusRefresh: '刷新状态',
+         taskModeLabel: '个人任务模式',
+         taskModeHint: '模式只调整本机工作策略，不开启远程协作。',
+         taskModePlan: '规划',
+         taskModeExecute: '执行',
+         taskModeReview: '审查',
+         taskModeApplied: '任务模式已应用',
+         taskModeDescription: '模式说明',
         supervisorTitle: "Claude 全局监工",
         supervisorEnabled: "全局自动监工",
         supervisorHint: "每轮结束或中断后核查目标和进度；判断继续、等待或达标。仅处理主会话，不依赖面板一直打开。",
@@ -516,6 +540,30 @@ window.__ModuleLoader__.load({
         sessionReset: 'Reset',
         sessionResetConfirm: 'Reset the current Claude session mapping? The next Claude call starts a new session; old session files stay.',
         sessionResetDone: 'Claude session reset',
+         sessionFork: 'Fork',
+         sessionForkConfirm: 'The next Claude call will fork from this session and leave the original unchanged. Continue?',
+         sessionForkPending: 'Fork on next call',
+         sessionForkDone: 'The next call will fork this session',
+         claudeStatusTitle: 'Claude status',
+         claudeStatusRunning: 'Plugin call running',
+         claudeStatusIdle: 'Idle; current session can continue',
+         claudeStatusNew: 'Ready; no project session yet',
+         claudeStatusUnavailable: 'No Claude engine available',
+         claudeStatusUnknown: 'Status unknown',
+         claudeStatusEngine: 'Engine',
+         claudeStatusSession: 'Current session',
+         claudeStatusTask: 'Current task',
+         claudeStatusLastUse: 'Last use',
+         claudeStatusSource: 'Status source',
+         claudeStatusPlugin: 'Plugin call',
+         claudeStatusRefresh: 'Refresh status',
+         taskModeLabel: 'Personal task mode',
+         taskModeHint: 'These modes change local work policy only; no remote collaboration is enabled.',
+         taskModePlan: 'Plan',
+         taskModeExecute: 'Execute',
+         taskModeReview: 'Review',
+         taskModeApplied: 'Task mode applied',
+         taskModeDescription: 'Mode details',
         supervisorTitle: "Claude global supervisor",
         supervisorEnabled: "Monitor all main sessions",
         supervisorHint: "Check the original goal after each completed or interrupted turn; continue, wait, or finish. Monitoring runs in the host while the panel is closed.",
@@ -1125,6 +1173,7 @@ window.__ModuleLoader__.load({
       goal: '',
       permissionMode: 'plan',
       agentPreset: '',
+      taskMode: 'execute',
     }
 
     const STORAGE_KEY = 'claude-on-dsh:snapshot'
@@ -1318,6 +1367,9 @@ window.__ModuleLoader__.load({
       const [recordsOpen, setRecordsOpen] = useState(false)
       const [recordItems, setRecordItems] = useState([])
       const [claudeSessions, setClaudeSessions] = useState([])
+       const [taskModeActive, setTaskModeActive] = useState('execute')
+       const [taskModeItems, setTaskModeItems] = useState([])
+       const taskModes = { active: taskModeActive, items: taskModeItems }
       const [usage, setUsage] = useState({
         costUsd: 0,
         calls: 0,
@@ -1549,7 +1601,25 @@ window.__ModuleLoader__.load({
 
       useEffect(() => {
         let stopped = false
-        const loadJobs = async () => {
+        const loadTaskModes = async () => {
+           try {
+             const data = await request('/task-modes')
+             if (!stopped && data) {
+               const active = data.active || 'execute'
+               setTaskModeActive(active)
+                setTaskModeItems(Array.isArray(data.items) ? data.items : [])
+               setForm((current) => ({ ...current, taskMode: active }))
+             }
+           } catch {}
+         }
+         loadTaskModes()
+         const modeTimer = setInterval(loadTaskModes, 20000)
+         return () => { stopped = true; clearInterval(modeTimer) }
+       }, [])
+
+       useEffect(() => {
+         let stopped = false
+         const loadJobs = async () => {
           try {
             const data = await request('/jobs/list')
             if (stopped) return
@@ -3065,6 +3135,23 @@ window.__ModuleLoader__.load({
             )
           : null,
         h(
+          Field,
+          { label: tt('taskModeLabel'), hint: tt('taskModeHint') },
+          h(
+            'select',
+            {
+              className: 'cc-input',
+              value: taskModes.active || form.taskMode || 'execute',
+              onChange: (event) => applyTaskMode(event.target.value),
+            },
+            (taskModes.items.length ? taskModes.items : [
+              { id: 'plan', label: tt('taskModePlan'), description: '' },
+              { id: 'execute', label: tt('taskModeExecute'), description: '' },
+              { id: 'review', label: tt('taskModeReview'), description: '' },
+            ]).map((item) => h('option', { key: item.id, value: item.id }, item.label)),
+          ),
+        ),
+        h(
           'div',
           { className: 'cc-actions' },
           form.engine === 'cli'
@@ -3473,6 +3560,45 @@ window.__ModuleLoader__.load({
           .catch(() => {})
       }
 
+      async function applyTaskMode(id) {
+        try {
+          const data = await request('/task-modes', { method: 'POST', body: JSON.stringify({ id }) })
+          setTaskModeActive(data.active || id)
+          setTaskModeItems(Array.isArray(data.items) ? data.items : [])
+          const selected = Array.isArray(data.items) ? data.items.find((item) => item.id === (data.active || id)) : null
+          if (selected) setReviewSettings((current) => ({
+            ...current,
+            manualAcceptance: selected.manualAcceptance === true,
+            autoPrompt: selected.autoPrompt === true,
+            defaultAction: selected.defaultAction || 'none',
+            supervision: selected.supervision || current.supervision,
+          }))
+          setForm((current) => ({ ...current, taskMode: data.active || id }))
+          setToast(tt('taskModeApplied'))
+          await refreshSupervision()
+        } catch (error) { fail(error.message, error.hint) }
+      }
+
+      async function refreshClaudeStatus() {
+        try {
+          const [detected, sessions] = await Promise.all([request('/detect'), listClaudeSessions()])
+          setDetect(detected)
+          setClaudeSessions(Array.isArray(sessions && sessions.items) ? sessions.items : [])
+        } catch (error) { fail(error.message, error.hint) }
+      }
+
+      async function forkCurrentClaudeSession(item) {
+        if (!item) return
+        if (!window.confirm(tt('sessionForkConfirm'))) return
+        try {
+          await request('/claude-session/fork', { method: 'POST', body: JSON.stringify({ key: item.key }) })
+          setClaudeSessions((current) => current.map((entry) => entry.key === item.key
+            ? { ...entry, forkPending: true, forkFrom: entry.sessionId, forkRequestedAt: Date.now() }
+            : entry))
+          setToast(tt('sessionForkDone'))
+        } catch (error) { fail(error.message, error.hint) }
+      }
+
       function refreshClaudeSessionList() {
         listClaudeSessions()
           .then((data) =>
@@ -3520,6 +3646,26 @@ window.__ModuleLoader__.load({
         }
         return labels[label] || label || '最近使用'
       }
+      const currentTaskMode = taskModes.items.find((item) => item.id === (taskModes.active || form.taskMode))
+      const currentClaudeJob = form.projectDir
+        ? backgroundJobs.find((item) => item.state === 'running'
+          && normalizeProject(item.payload && item.payload.projectDir) === normalizeProject(form.projectDir))
+        : null
+      const engineAvailable = cliReady || Boolean(agentEngine && agentEngine.active === 'sdk' && agentEngine.sdk && agentEngine.sdk.available)
+      const claudeStatus = currentClaudeJob
+        ? 'running'
+        : !engineAvailable
+          ? 'unavailable'
+          : currentClaude
+            ? 'idle'
+            : 'new'
+      const claudeStatusLabel = {
+        running: tt('claudeStatusRunning'),
+        idle: tt('claudeStatusIdle'),
+        new: tt('claudeStatusNew'),
+        unavailable: tt('claudeStatusUnavailable'),
+      }[claudeStatus] || tt('claudeStatusUnknown')
+
       if (activeWorkspace === 'supervision') {
         main = renderSupervisionPage()
       } else if (activeWorkspace === 'devdoc') {
@@ -3597,7 +3743,16 @@ window.__ModuleLoader__.load({
                     { className: 'cc-sessionName' },
                     `${currentProjectName} · ${currentClaude.sessionId.slice(0, 8)}`,
                   ),
-                  h('span', { className: 'cc-sessionUse' }, claudeUseLabel(currentClaude.label)),
+                  h('span', { className: 'cc-sessionUse' }, currentClaude.forkPending ? tt('sessionForkPending') : claudeUseLabel(currentClaude.label)),
+                   h(
+                     'button',
+                     {
+                       type: 'button',
+                       className: 'cc-sessionReset',
+                       onClick: () => forkCurrentClaudeSession(currentClaude),
+                     },
+                     tt('sessionFork'),
+                   ),
                   h(
                     'button',
                     {
@@ -3672,6 +3827,24 @@ window.__ModuleLoader__.load({
             h(Button, { variant: 'link', onClick: openRecords }, tt('records')),
           ),
         ),
+        activeWorkspace !== 'supervision'
+          ? h(
+              'section',
+              { className: `cc-claudeStatusCard cc-claudeStatus-${claudeStatus}` },
+              h('div', { className: 'cc-claudeStatusHead' },
+                h('div', { className: 'cc-cardTitle' }, tt('claudeStatusTitle')),
+                h('span', { className: 'cc-statusPill' }, h('i', { className: `cc-dot ${claudeStatus === 'running' ? 'on' : claudeStatus === 'unavailable' ? 'warn' : ''}` }), claudeStatusLabel),
+                h(Button, { variant: 'link', onClick: refreshClaudeStatus }, tt('claudeStatusRefresh')),
+              ),
+              h('div', { className: 'cc-claudeStatusGrid' },
+                h('div', null, h('span', { className: 'cc-statusLabel' }, tt('claudeStatusEngine')), h('strong', null, agentEngine && agentEngine.active === 'sdk' ? tt('statusEngineSdk') : tt('statusEngineCli'))),
+                h('div', null, h('span', { className: 'cc-statusLabel' }, tt('claudeStatusSession')), h('strong', null, currentClaude ? currentClaude.sessionId.slice(0, 12) : '—')),
+                h('div', null, h('span', { className: 'cc-statusLabel' }, tt('claudeStatusTask')), h('strong', null, currentClaudeJob ? (currentClaudeJob.phase || currentClaudeJob.kind) : '—')),
+                h('div', null, h('span', { className: 'cc-statusLabel' }, tt('claudeStatusLastUse')), h('strong', null, currentClaude ? claudeUseLabel(currentClaude.label) : '—')),
+              ),
+              h('p', { className: 'cc-claudeStatusNote' }, `${tt('claudeStatusSource')}：${tt('claudeStatusPlugin')}${currentTaskMode ? ` · ${currentTaskMode.label}` : ''}`),
+            )
+          : null,
         notice ? h(Notice, { notice, tt }) : null,
         main,
         activeWorkspace !== 'supervision' && h(
@@ -4814,7 +4987,33 @@ body[data-dsh-claude-style] .cc-panel {
   color: var(--cc-accent-strong);
 }
 
-.cc-sessionChip {
+.cc-claudeStatusCard {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  flex: 0 0 auto;
+  gap: 8px;
+  max-inline-size: 100%;
+  overflow: hidden;
+  padding: 10px 12px;
+  border: 1px solid var(--cc-line);
+  border-radius: var(--cc-r-sm);
+  background: var(--cc-paper);
+}
+.cc-claudeStatusHead,
+.cc-claudeStatusGrid { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-inline-size: 0; }
+.cc-claudeStatusHead .cc-cardTitle { margin-inline-end: auto; }
+.cc-claudeStatusGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr)); align-items: start; }
+.cc-claudeStatusGrid > div { display: grid; gap: 1px; min-inline-size: 0; }
+.cc-statusLabel { color: var(--cc-muted); font-size: 11px; }
+.cc-claudeStatusGrid strong { overflow-wrap: anywhere; font-size: 12px; font-weight: 600; }
+.cc-statusPill { display: inline-flex; align-items: center; gap: 5px; color: var(--cc-ink-2); font-size: 11.5px; }
+.cc-claudeStatus-running { border-color: var(--cc-accent-line); background: var(--cc-accent-tint); }
+.cc-claudeStatus-unavailable { border-color: var(--cc-warn); }
+.cc-claudeStatusNote { margin: 0; color: var(--cc-muted); font-size: 11px; }
+
+.cc-sessionChip .cc-sessionReset + .cc-sessionReset { margin-inline-start: -5px; }
+
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -5623,7 +5822,10 @@ body[data-dsh-claude-style] .cc-panel {
 
 @container (max-width: 760px) {
   .cc-grid { grid-template-columns: 1fr; }
-  .cc-hero { align-items: flex-start; padding: 14px 16px; }
+  .cc-claudeStatusHead { align-items: flex-start; }
+  .cc-claudeStatusHead .cc-cardTitle { flex: 1 1 100%; margin-inline-end: 0; }
+  .cc-claudeStatusHead .cc-statusPill { min-inline-size: 0; max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
+  .cc-claudeStatusHead .cc-btn { flex: 0 0 auto; }
   .cc-heroText { flex-basis: min(100%, 300px); }
   .cc-chips {
     inline-size: 100%;

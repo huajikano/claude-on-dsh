@@ -77,8 +77,9 @@ test('a resume id and a model reach the options only when given', () => {
   const bare = buildSdkOptions({ cwd: 'C:/proj' })
   assert.equal('resume' in bare, false)
   assert.equal('model' in bare, false)
-  const full = buildSdkOptions({ cwd: 'C:/proj', resume: 'abc', model: 'sonnet' })
+  const full = buildSdkOptions({ cwd: 'C:/proj', resume: 'abc', model: 'sonnet', forkSession: true })
   assert.equal(full.resume, 'abc')
+  assert.equal(full.forkSession, true)
   assert.equal(full.model, 'sonnet')
 })
 

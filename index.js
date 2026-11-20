@@ -32,6 +32,7 @@ import { createJobs } from './lib/jobs.js'
 import { readSession } from './lib/session-read.js'
 import { latestForkSessions } from './lib/sessions.js'
 import { createPromptStore, renderPrompt } from './lib/prompts.js'
+import { applyTaskMode, normalizeTaskMode, taskModeItems } from './lib/task-modes.js'
 import {
   devDocTemplate, analyzeDevDocInput,
   buildDevDocReviewPrompt, DEV_DOC_SCHEMA, normalizeDevDoc,
@@ -619,12 +620,13 @@ export function planningPermissionMode(requested, fallback) {
   return normalizeMode(fallback, 'plan')
 }
 
-function cliArgs({ permissionMode, schema, model, systemPrompt, resume, readOnly = false }) {
+function cliArgs({ permissionMode, schema, model, systemPrompt, resume, forkSession = false, readOnly = false }) {
   const args = ['-p', '--output-format', 'json', '--permission-mode', permissionMode]
   if (schema) args.push('--json-schema', JSON.stringify(schema))
   if (model) args.push('--model', model)
   if (systemPrompt) args.push('--append-system-prompt', systemPrompt)
   if (resume) args.push('--resume', resume)
+  if (forkSession && resume) args.push('--fork-session')
   if (readOnly) args.push('--tools', 'Read,Glob,Grep', '--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers: {} }))
   return args
 }
@@ -650,8 +652,8 @@ function apiHint(stderr, proxy) {
  * Start one unattended Claude Code run.
  * @returns {{ promise: Promise<{data: object, meta: object}>, cancel: () => void }}
  */
-function startClaudeRun({ executable, prompt, cwd, schema, systemPrompt, permissionMode, model, resume, timeoutMs, proxy, label }) {
-  const command = spawnCommand(executable, cliArgs({ permissionMode, schema, model, systemPrompt, resume, readOnly: label === 'supervision' }))
+function startClaudeRun({ executable, prompt, cwd, schema, systemPrompt, permissionMode, model, resume, forkSession = false, timeoutMs, proxy, label }) {
+  const command = spawnCommand(executable, cliArgs({ permissionMode, schema, model, systemPrompt, resume, forkSession, readOnly: label === 'supervision' }))
   const child = spawn(command.file, command.args, {
     cwd,
     env: childEnv(),
@@ -1090,6 +1092,28 @@ function rememberClaudeSession(key, entry) {
   return task
 }
 
+function requestClaudeSessionFork(key) {
+  const task = claudeSessionsWrite.then(async () => {
+    const sessions = await readClaudeSessions()
+    const current = sessions[key]
+    if (!current || !current.sessionId) throw new Error('Claude 会话不存在或已被删除')
+    sessions[key] = {
+      ...current,
+      forkPending: true,
+      forkFrom: current.sessionId,
+      forkRequestedAt: Date.now(),
+    }
+    const file = claudeSessionsFile()
+    await mkdir(path.dirname(file), { recursive: true })
+    const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`
+    await writeFile(temporary, `${JSON.stringify(sessions, null, 2)}\n`, 'utf8')
+    await rename(temporary, file)
+    return sessions[key]
+  })
+  claudeSessionsWrite = task.catch(() => {})
+  return task
+}
+
 function forgetClaudeSession(key) {
   const task = claudeSessionsWrite.then(async () => {
     const sessions = await readClaudeSessions()
@@ -1186,6 +1210,7 @@ export function apply(ctx, config = {}) {
     autoPrompt: false,
     defaultAction: 'none',
     dailyBudgetUsd: 5,
+    taskMode: 'execute',
   }
   try {
     Object.assign(
@@ -1203,6 +1228,7 @@ export function apply(ctx, config = {}) {
   if (!['claude', 'none'].includes(acceptanceSettings.defaultAction)) {
     acceptanceSettings.defaultAction = 'none'
   }
+  acceptanceSettings.taskMode = normalizeTaskMode(acceptanceSettings.taskMode, 'execute')
   if (
     typeof acceptanceSettings.dailyBudgetUsd !== 'number' ||
     !Number.isFinite(acceptanceSettings.dailyBudgetUsd) ||
@@ -1312,13 +1338,16 @@ export function apply(ctx, config = {}) {
     }
     const key = projectKey(cwd)
     const sessions = await readClaudeSessions()
+    const previous = sessions[key] && typeof sessions[key] === 'object' ? sessions[key] : {}
     // Monitoring is an independent read-only query, not a continuation of the
     // planner's conversation. Never mix supervision turns into its resume map.
-    let resume = label === 'supervision' ? '' : sessions[key] && sessions[key].sessionId
+    let resume = label === 'supervision' ? '' : previous.sessionId
+    let forkSession = label !== 'supervision' && Boolean(previous.forkPending && resume)
+    const forkFrom = forkSession ? resume : ''
     const engine = await engineFor()
     const native = options.executable === SDK_SENTINEL ? '' : options.executable || ''
     const pending = claudeTimeoutMessage(label, options.timeoutMs)
-    const attemptRun = (resumeId) => engine === 'sdk'
+    const attemptRun = (resumeId, fork) => engine === 'sdk'
       ? startSdkRun({
           prompt: options.prompt,
           cwd,
@@ -1326,6 +1355,7 @@ export function apply(ctx, config = {}) {
           model: options.model,
           permissionMode: options.permissionMode,
           resume: resumeId,
+          forkSession: fork,
           systemPrompt: options.systemPrompt,
           executable: native,
           timeoutMs: options.timeoutMs,
@@ -1335,10 +1365,10 @@ export function apply(ctx, config = {}) {
           makeTimeoutError: () => userError(pending.message, pending.hint, 504),
           makeCancelError: () => userError('已取消本次 Claude 调用', '', 409),
         })
-      : startClaudeRun({ ...options, cwd, resume: resumeId, label })
+      : startClaudeRun({ ...options, cwd, resume: resumeId, forkSession: fork, label })
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const run = attemptRun(resume)
+        const run = attemptRun(resume, forkSession)
         if (typeof onCancel === 'function') onCancel(run.cancel)
         const result = await run.promise
         const sessionId = (result.meta && result.meta.sessionId) || resume
@@ -1351,22 +1381,29 @@ export function apply(ctx, config = {}) {
         if (sessionId && label !== 'supervision') {
           try {
             await rememberClaudeSession(key, {
+              ...previous,
               sessionId,
               cwd: path.resolve(cwd),
               at: Date.now(),
               label: label || '',
+              forkPending: false,
+              ...(forkFrom ? { forkedFrom: forkFrom } : {}),
             })
           } catch {}
         }
-        return { ...result, claudeSessionId: sessionId || '', claudeKey: key }
+        return { ...result, claudeSessionId: sessionId || '', claudeKey: key, forkedFrom: forkFrom }
       } catch (error) {
         const message = `${error.message || ''} ${error.hint || ''}`
+        if (forkSession && resume) {
+          throw userError('Claude 会话 fork 失败', message || '请重试；原会话未被修改。', 502)
+        }
         if (
           attempt === 0 &&
           resume &&
           /resume|session|conversation|not found|no conversation/i.test(message)
         ) {
           resume = ''
+          forkSession = false
           continue
         }
         throw error
@@ -3441,6 +3478,39 @@ export function apply(ctx, config = {}) {
         const feed = await readReviewFeed()
         const entries = Object.values(feed).sort((a, b) => (b.at || 0) - (a.at || 0))
         return json({ entries })
+      }),
+    },
+    {
+      path: '/claude-session/fork',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        const key = text(body.key).trim()
+        if (!key) throw userError('缺少要 fork 的 Claude 会话', '', 400)
+        try {
+          const session = await requestClaudeSessionFork(key)
+          return json({ pending: true, session })
+        } catch (error) {
+          throw userError(error.message, '请先确认当前项目已有 Claude session。', 404)
+        }
+      }),
+    },
+    {
+      path: '/task-modes',
+      methods: ['GET', 'POST'],
+      handler: endpoint(async (request) => {
+        if (request.method === 'POST') {
+          const body = await readBody(request)
+          const id = normalizeTaskMode(text(body.id).trim(), '')
+          if (!id) throw userError('无效任务模式', '可选模式：规划、执行、审查。', 400)
+          Object.assign(acceptanceSettings, applyTaskMode(acceptanceSettings, id))
+          acceptanceSettings.workflowVersion = 2
+          await mkdir(path.dirname(acceptanceSettingsFile), { recursive: true })
+          await writeFile(acceptanceSettingsFile, `${JSON.stringify(acceptanceSettings, null, 2)}\n`, 'utf8')
+          acceptance.setAuto(legacyGate && acceptanceSettings.autoAcceptance && !acceptanceSettings.supervision.enabled)
+          await supervisor.refresh()
+        }
+        return json({ active: acceptanceSettings.taskMode, items: taskModeItems(acceptanceSettings.taskMode) })
       }),
     },
     {

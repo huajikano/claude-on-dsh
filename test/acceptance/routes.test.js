@@ -380,3 +380,43 @@ test('a remote API endpoint is not reported as an unreachable proxy', async () =
     assert.equal(result.data.proxy.reachable, false)
   })
 })
+
+test('personal task modes apply bounded local supervision policies', async () => {
+  await withIsolatedEnv(async () => {
+    const harness = createHarness(os.tmpdir())
+    apply(harness.ctx, {})
+    const initial = await harness.invoke('GET', '/task-modes')
+    assert.equal(initial.status, 200)
+    assert.equal(initial.data.active, 'execute')
+    assert.deepEqual(initial.data.items.map((item) => item.id), ['plan', 'execute', 'review'])
+
+    const applied = await harness.invoke('POST', '/task-modes', { id: 'review' })
+    assert.equal(applied.status, 200)
+    assert.equal(applied.data.active, 'review')
+    const settings = await harness.invoke('GET', '/settings')
+    assert.equal(settings.data.taskMode, 'review')
+    assert.equal(settings.data.manualAcceptance, true)
+    assert.equal(settings.data.supervision.enabled, false)
+  })
+})
+
+test('Claude session fork marks the next call without changing the original mapping', async () => {
+  await withIsolatedEnv(async (root) => {
+    const workspace = path.join(root, 'fork-project')
+    await mkdir(workspace, { recursive: true })
+    const key = process.platform === 'win32' ? path.resolve(workspace).toLowerCase() : path.resolve(workspace)
+    const sessionFile = path.join(process.env.DSH_HOME, 'claude-on-dsh', 'claude-sessions.json')
+    await mkdir(path.dirname(sessionFile), { recursive: true })
+    await writeFile(sessionFile, JSON.stringify({ [key]: { sessionId: 'session-original', cwd: workspace, label: 'plan', at: 10 } }))
+    const harness = createHarness(workspace)
+    apply(harness.ctx, {})
+    const fork = await harness.invoke('POST', '/claude-session/fork', { key })
+    assert.equal(fork.status, 200)
+    assert.equal(fork.data.pending, true)
+    assert.equal(fork.data.session.sessionId, 'session-original')
+    assert.equal(fork.data.session.forkPending, true)
+    const listed = await harness.invoke('GET', '/claude-sessions')
+    assert.equal(listed.data.items[0].sessionId, 'session-original')
+    assert.equal(listed.data.items[0].forkPending, true)
+  })
+})

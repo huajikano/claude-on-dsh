@@ -49,7 +49,22 @@ Claude 返回结构化决策：
 
 没有 MCP 时仍可在概览展开「桌面待审任务」，复制提示词到 Claude Desktop，再粘贴 JSON 回填。无有效回复不会续跑，也不会静默改用 CLI。旧任务在会话、用户要求或目标变动后不会执行；同一回复不能触发两次续跑。
 
-## 概览、记录和设置
+## Claude 状态与个人任务模式
+
+主页的「Claude 状态」卡片只报告本插件可以确认的事实：当前项目有没有插件任务正在运行、将使用 CLI 还是 Agent SDK、当前项目映射的 session 短 id、最近用途和当前任务模式。没有正在运行的插件 job 时显示空闲；这不代表用户在其他终端手工启动的 Claude 进程状态，插件不会伪造外部进程的实时状态。
+
+个人模式有三种：
+
+| 模式 | 作用 |
+| --- | --- |
+| 规划 | 关闭自动监工，适合理解需求、首问和定稿。 |
+| 执行 | 开启有边界的全局监工，默认冷却、重试、无进展和轮数上限更适合持续执行。 |
+| 审查 | 停止自动续跑，保留手动验收入口。 |
+
+模式保存在 `$DSH_HOME/claude-on-dsh/settings.json`，只作用于本机，不引入 relay、远程调用方或多人权限系统。
+
+项目的普通规划/定稿/验收调用按项目目录复用 Claude Code session。点击当前 session 的「Fork」后，插件只记录 `forkPending`，下一次 CLI 调用使用 `--resume` + `--fork-session`，SDK 调用使用 `resume` + `forkSession`；成功后保存新的 session id，原 session 不被写入。监工始终使用独立的只读查询，不会 Fork 或污染规划 session。
+
 
 主页工具栏只显示监工入口和累计执行数。独立工作区的「概览」有累计执行、有效判断、续跑、达标、失败和桌面待审，并可按会话暂停、恢复、查看记录。「监工记录」支持按会话和结果筛选，记录依据、证据、错误与动作结果。「监工设置」可一次保存引擎、续跑间隔、重试和上限，也可保留原来的预算和可选验收设置。
 
@@ -87,7 +102,9 @@ supervision:
 - `POST /supervision`：`{ sessionId, action: 'pause'|'resume' }`。
 - `GET /supervision/desktop/status`：检测应用、配置与 MCP 握手。`POST` 的 `configure` 操作只写用户确认过的桌面配置。
 - `POST /supervision/desktop`：打开待审任务或提交带 `requestId` 的决策。
-
+- `GET/POST /task-modes`：读取或应用 `plan`、`execute`、`review` 个人模式。
+- `GET /claude-sessions`：读取本插件维护的项目 Claude session 映射。
+- `POST /claude-session/fork`：标记指定项目 session，下次 Claude 调用基于它 Fork；不会立即产生额外调用。
 监工不会更改 DSH 的沙箱/审批设置，不会提高原生目标轮次上限，也不会自动启用 dsh-claude 或 dsh-claude-style。独立运行所需的只是 Claude CLI/SDK；桌面路径沿用本插件已有的桌面启动配置。
 
 ## 验证边界
