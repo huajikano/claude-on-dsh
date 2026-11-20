@@ -51,7 +51,16 @@ DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 
 4. 安装后启用，重启/刷新 DSH；
 5. 如果 profile 里的配置被清除，按下面「配置」一节重新填 `claudeCliPath` 等值。
 
-> 不要用不带 `#v2.4.0` 的 `github:huajikano/claude-on-dsh` 做更新：那会跟随默认分支，无法判断装的是哪一版。固定 tag 更可控。
+> 如果看到 `already-installed`、`更新前的构建未能验证恢复`，或提示“桌面端认为这个包已经装在 profile 里”，这是桌面端在运行 `pnpm` 前拒绝了同名 bundle 覆盖，通常不会改动 profile。不要反复点击 Update/Add，也不要改包名绕过。请按下面顺序处理：
+>
+> 1. 在 **Plugins** 中对 **Claude on DSH** 点 **Remove**，确认移除完成；只禁用不够。
+> 2. 完全退出并重新启动 DSH Desktop。
+> 3. 检查对应 profile 的 `package.json` / `cordis.patch.yml` 已不再登记 `claude-on-dsh`；不要删除 `$DSH_HOME/claude-on-dsh/` 下的设置、记录或监工状态。
+> 4. 重新 Add plugin，并使用上面的固定 tag。
+>
+> 这个错误发生在插件代码加载之前，插件本身无法通过运行时逻辑修复；若 Remove 后仍报告同名已安装，应先备份 profile，再让 DSH Desktop 清理残留的 bundle 登记后重启。
+>
+> 不要用不带 `#v2.4.0` 的 `github:huajikano/claude-on-dsh` 做更新；固定 tag 才能明确安装的版本。
 
 ## 主界面
 
