@@ -3003,7 +3003,13 @@ export function apply(ctx, config = {}) {
       handler: endpoint(async () => json({
         jobs: listJobs().map((job) => {
           const { result, meta, payload, ...summary } = job
-          return { ...summary, hasResult: Boolean(result) }
+          const source = payload && typeof payload === 'object' ? payload : {}
+          return {
+            ...summary,
+            projectDir: text(source.projectDir || (source.entry && source.entry.projectDir) || ''),
+            title: text(source.title || (source.entry && source.entry.title) || ''),
+            hasResult: Boolean(result),
+          }
         }),
       })),
     },

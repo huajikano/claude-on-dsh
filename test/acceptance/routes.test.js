@@ -420,3 +420,30 @@ test('Claude session fork marks the next call without changing the original mapp
     assert.equal(listed.data.items[0].forkPending, true)
   })
 })
+
+test('job list exposes project metadata for the Claude status card without the prompt payload', async () => {
+  await withIsolatedEnv(async (root) => {
+    const workspace = path.join(root, 'status-project')
+    await mkdir(workspace, { recursive: true })
+    const harness = createHarness(workspace)
+    apply(harness.ctx, {})
+    const started = await harness.invoke('POST', '/jobs', {
+      kind: 'devdoc',
+      projectDir: workspace,
+      title: 'Status Project',
+      content: '',
+    })
+    assert.equal(started.status, 200, JSON.stringify(started.data))
+    const listed = await waitFor(async () => {
+      const result = await harness.invoke('GET', '/jobs/list')
+      const job = result.data.jobs.find((item) => item.id === started.data.job.id)
+      return job && job.state !== 'running' ? result.data : null
+    })
+    const job = listed.jobs.find((item) => item.id === started.data.job.id)
+    assert.ok(job, 'started job is listed')
+    assert.equal(job.projectDir, workspace)
+    assert.equal(job.title, 'Status Project')
+    assert.equal('payload' in job, false, 'the full prompt payload stays out of the list response')
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  })
+})

@@ -189,6 +189,11 @@ window.__ModuleLoader__.load({
          claudeStatusSource: '状态来源',
          claudeStatusPlugin: '本插件调用',
          claudeStatusRefresh: '刷新状态',
+         claudeStatusRefreshing: '刷新中…',
+         claudeStatusRefreshed: 'Claude 状态已刷新',
+         claudeStatusError: '最近任务失败',
+         claudeStatusInterrupted: '最近任务已中断',
+         claudeStatusLastTask: '最近任务',
          taskModeLabel: '个人任务模式',
          taskModeHint: '模式只调整本机工作策略，不开启远程协作。',
          taskModePlan: '规划',
@@ -251,6 +256,7 @@ window.__ModuleLoader__.load({
         supervisorAllSessions: '全部会话',
         supervisorHistoryEmpty: '没有符合条件的监工记录。',
         supervisorRefreshHistory: '刷新记录',
+        supervisorHistoryRefreshed: '监工记录已刷新',
         supervisorHistoryLoading: '正在读取监工记录…',
         supervisorLoadMore: '加载更多',
         supervisorLegacyChecks: '旧版已记录判断（不计入上述累计）',
@@ -557,6 +563,11 @@ window.__ModuleLoader__.load({
          claudeStatusSource: 'Status source',
          claudeStatusPlugin: 'Plugin call',
          claudeStatusRefresh: 'Refresh status',
+         claudeStatusRefreshing: 'Refreshing…',
+         claudeStatusRefreshed: 'Claude status refreshed',
+         claudeStatusError: 'Latest task failed',
+         claudeStatusInterrupted: 'Latest task was interrupted',
+         claudeStatusLastTask: 'Latest task',
          taskModeLabel: 'Personal task mode',
          taskModeHint: 'These modes change local work policy only; no remote collaboration is enabled.',
          taskModePlan: 'Plan',
@@ -619,6 +630,7 @@ window.__ModuleLoader__.load({
         supervisorAllSessions: 'All sessions',
         supervisorHistoryEmpty: 'No matching monitor records.',
         supervisorRefreshHistory: 'Refresh history',
+        supervisorHistoryRefreshed: 'Monitor history refreshed',
         supervisorHistoryLoading: 'Loading monitor history…',
         supervisorLoadMore: 'Load more',
         supervisorLegacyChecks: 'Decisions recorded by the old version (excluded from totals above)',
@@ -1338,6 +1350,7 @@ window.__ModuleLoader__.load({
       )
       const [job, setJob] = useState(null)
       const [backgroundJobs, setBackgroundJobs] = useState([])
+      const [claudeStatusBusy, setClaudeStatusBusy] = useState(false)
       const [brief, setBrief] = useState(() => (restored ? restored.brief ?? null : null))
       const [answer, setAnswer] = useState(() => (restored ? restored.answer ?? '' : ''))
       const [refined, setRefined] = useState(() => (restored ? restored.refined ?? null : null))
@@ -1367,9 +1380,9 @@ window.__ModuleLoader__.load({
       const [recordsOpen, setRecordsOpen] = useState(false)
       const [recordItems, setRecordItems] = useState([])
       const [claudeSessions, setClaudeSessions] = useState([])
-       const [taskModeActive, setTaskModeActive] = useState('execute')
-       const [taskModeItems, setTaskModeItems] = useState([])
-       const taskModes = { active: taskModeActive, items: taskModeItems }
+      const [taskModeActive, setTaskModeActive] = useState('execute')
+      const [taskModeItems, setTaskModeItems] = useState([])
+      const taskModes = { active: taskModeActive, items: taskModeItems }
       const [usage, setUsage] = useState({
         costUsd: 0,
         calls: 0,
@@ -1451,8 +1464,15 @@ window.__ModuleLoader__.load({
           const data = await request('/supervision/history?' + query)
           if (version === historyRequest.current) setSupervisionHistory((current) => ({ ...data,
             items: before ? [...new Map([...current.items, ...data.items].map((row) => [row.id, row])).values()] : data.items }))
-        } catch (error) { if (version === historyRequest.current) setSupervisionHistoryError(error.message) }
-        finally { if (version === historyRequest.current) setSupervisionHistoryBusy(false) }
+          return version === historyRequest.current
+        } catch (error) {
+          if (version === historyRequest.current) setSupervisionHistoryError(error.message)
+          return false
+        } finally { if (version === historyRequest.current) setSupervisionHistoryBusy(false) }
+      }
+      async function refreshSupervisionHistory() {
+        const loaded = await loadSupervisionHistory()
+        if (loaded) setToast(tt('supervisorHistoryRefreshed'))
       }
       async function configureDesktopBridge() {
         if (!desktopStatus?.bridgeReady || desktopBusy || !window.confirm(tt('supervisorConfigureConfirm'))) return
@@ -1602,24 +1622,24 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         let stopped = false
         const loadTaskModes = async () => {
-           try {
-             const data = await request('/task-modes')
-             if (!stopped && data) {
-               const active = data.active || 'execute'
-               setTaskModeActive(active)
-                setTaskModeItems(Array.isArray(data.items) ? data.items : [])
-               setForm((current) => ({ ...current, taskMode: active }))
-             }
-           } catch {}
-         }
-         loadTaskModes()
-         const modeTimer = setInterval(loadTaskModes, 20000)
-         return () => { stopped = true; clearInterval(modeTimer) }
-       }, [])
+          try {
+            const data = await request('/task-modes')
+            if (!stopped && data) {
+              const active = data.active || 'execute'
+              setTaskModeActive(active)
+              setTaskModeItems(Array.isArray(data.items) ? data.items : [])
+              setForm((current) => ({ ...current, taskMode: active }))
+            }
+          } catch {}
+        }
+        loadTaskModes()
+        const modeTimer = setInterval(loadTaskModes, 20000)
+        return () => { stopped = true; clearInterval(modeTimer) }
+      }, [])
 
-       useEffect(() => {
-         let stopped = false
-         const loadJobs = async () => {
+      useEffect(() => {
+        let stopped = false
+        const loadJobs = async () => {
           try {
             const data = await request('/jobs/list')
             if (stopped) return
@@ -2347,7 +2367,7 @@ window.__ModuleLoader__.load({
               onChange: (event) => setSupervisionSession(event.target.value) },
               h('option', { value: '' }, tt('supervisorAllSessions')),
               sessionRows.map((row) => h('option', { key: row.sessionId, value: row.sessionId }, `${row.objective?.slice(0, 48) || row.sessionId} · ${row.sessionId.slice(0, 8)}`))),
-            h(Button, { variant: 'ghost', disabled: supervisionHistoryBusy, onClick: () => loadSupervisionHistory() }, tt('supervisorRefreshHistory'))),
+            h(Button, { variant: 'ghost', busy: supervisionHistoryBusy, disabled: supervisionHistoryBusy, onClick: refreshSupervisionHistory }, tt('supervisorRefreshHistory'))),
           supervisionHistoryError ? h('div', { className: 'cc-inlineWarn', role: 'alert' }, supervisionHistoryError) : null,
           supervisionHistory.items.length ? h('div', { className: 'cc-monitorHistoryList' }, supervisionHistory.items.map((item) =>
             h('article', { className: 'cc-monitorHistoryItem', key: item.id },
@@ -3580,11 +3600,40 @@ window.__ModuleLoader__.load({
       }
 
       async function refreshClaudeStatus() {
+        if (claudeStatusBusy) return
+        setClaudeStatusBusy(true)
         try {
-          const [detected, sessions] = await Promise.all([request('/detect'), listClaudeSessions()])
-          setDetect(detected)
-          setClaudeSessions(Array.isArray(sessions && sessions.items) ? sessions.items : [])
+          const [detected, sessions, jobsResult, modes] = await Promise.allSettled([
+            request('/detect'),
+            listClaudeSessions(),
+            request('/jobs/list'),
+            request('/task-modes'),
+          ])
+          let applied = 0
+          if (detected.status === 'fulfilled') {
+            setDetect(detected.value)
+            setDetectError('')
+            applied += 1
+          }
+          if (sessions.status === 'fulfilled') {
+            setClaudeSessions(Array.isArray(sessions.value && sessions.value.items) ? sessions.value.items : [])
+            applied += 1
+          }
+          if (jobsResult.status === 'fulfilled') {
+            setBackgroundJobs(Array.isArray(jobsResult.value && jobsResult.value.jobs) ? jobsResult.value.jobs : [])
+            applied += 1
+          }
+          if (modes.status === 'fulfilled' && modes.value) {
+            const active = modes.value.active || 'execute'
+            setTaskModeActive(active)
+            setTaskModeItems(Array.isArray(modes.value.items) ? modes.value.items : [])
+            setForm((current) => ({ ...current, taskMode: active }))
+            applied += 1
+          }
+          if (applied === 0) throw new Error('Claude 状态刷新失败')
+          setToast(tt('claudeStatusRefreshed'))
         } catch (error) { fail(error.message, error.hint) }
+        finally { setClaudeStatusBusy(false) }
       }
 
       async function forkCurrentClaudeSession(item) {
@@ -3647,24 +3696,41 @@ window.__ModuleLoader__.load({
         return labels[label] || label || '最近使用'
       }
       const currentTaskMode = taskModes.items.find((item) => item.id === (taskModes.active || form.taskMode))
-      const currentClaudeJob = form.projectDir
-        ? backgroundJobs.find((item) => item.state === 'running'
-          && normalizeProject(item.payload && item.payload.projectDir) === normalizeProject(form.projectDir))
-        : null
+      const projectJobs = form.projectDir
+        ? backgroundJobs.filter((item) => normalizeProject(
+            item.projectDir || (item.payload && item.payload.projectDir),
+          ) === normalizeProject(form.projectDir))
+        : []
+      const currentClaudeJob = projectJobs.find((item) => item.state === 'running') || null
+      const latestClaudeJob = projectJobs[0] || null
+      const recentFailure = latestClaudeJob
+        && ['error', 'interrupted'].includes(latestClaudeJob.state)
+        && Date.now() - (latestClaudeJob.finishedAt || latestClaudeJob.startedAt || 0) < 15 * 60_000
       const engineAvailable = cliReady || Boolean(agentEngine && agentEngine.active === 'sdk' && agentEngine.sdk && agentEngine.sdk.available)
       const claudeStatus = currentClaudeJob
         ? 'running'
-        : !engineAvailable
-          ? 'unavailable'
-          : currentClaude
-            ? 'idle'
-            : 'new'
+        : recentFailure && latestClaudeJob.state === 'error'
+          ? 'error'
+          : recentFailure && latestClaudeJob.state === 'interrupted'
+            ? 'interrupted'
+            : !engineAvailable
+              ? 'unavailable'
+              : currentClaude
+                ? 'idle'
+                : 'new'
       const claudeStatusLabel = {
         running: tt('claudeStatusRunning'),
+        error: tt('claudeStatusError'),
+        interrupted: tt('claudeStatusInterrupted'),
         idle: tt('claudeStatusIdle'),
         new: tt('claudeStatusNew'),
         unavailable: tt('claudeStatusUnavailable'),
       }[claudeStatus] || tt('claudeStatusUnknown')
+      const claudeTaskLabel = currentClaudeJob
+        ? (currentClaudeJob.phase || currentClaudeJob.kind)
+        : latestClaudeJob
+          ? `${latestClaudeJob.phase || latestClaudeJob.kind} · ${tt('claudeStatusLastTask')}`
+          : '—'
 
       if (activeWorkspace === 'supervision') {
         main = renderSupervisionPage()
@@ -3833,13 +3899,18 @@ window.__ModuleLoader__.load({
               { className: `cc-claudeStatusCard cc-claudeStatus-${claudeStatus}` },
               h('div', { className: 'cc-claudeStatusHead' },
                 h('div', { className: 'cc-cardTitle' }, tt('claudeStatusTitle')),
-                h('span', { className: 'cc-statusPill' }, h('i', { className: `cc-dot ${claudeStatus === 'running' ? 'on' : claudeStatus === 'unavailable' ? 'warn' : ''}` }), claudeStatusLabel),
-                h(Button, { variant: 'link', onClick: refreshClaudeStatus }, tt('claudeStatusRefresh')),
+                h('span', { className: 'cc-statusPill' }, h('i', { className: `cc-dot ${claudeStatus === 'running' ? 'on' : ['unavailable', 'error', 'interrupted'].includes(claudeStatus) ? 'warn' : ''}` }), claudeStatusLabel),
+                h(Button, {
+                  variant: 'link',
+                  busy: claudeStatusBusy,
+                  disabled: claudeStatusBusy,
+                  onClick: refreshClaudeStatus,
+                }, claudeStatusBusy ? tt('claudeStatusRefreshing') : tt('claudeStatusRefresh')),
               ),
               h('div', { className: 'cc-claudeStatusGrid' },
                 h('div', null, h('span', { className: 'cc-statusLabel' }, tt('claudeStatusEngine')), h('strong', null, agentEngine && agentEngine.active === 'sdk' ? tt('statusEngineSdk') : tt('statusEngineCli'))),
                 h('div', null, h('span', { className: 'cc-statusLabel' }, tt('claudeStatusSession')), h('strong', null, currentClaude ? currentClaude.sessionId.slice(0, 12) : '—')),
-                h('div', null, h('span', { className: 'cc-statusLabel' }, tt('claudeStatusTask')), h('strong', null, currentClaudeJob ? (currentClaudeJob.phase || currentClaudeJob.kind) : '—')),
+                h('div', null, h('span', { className: 'cc-statusLabel' }, tt('claudeStatusTask')), h('strong', null, claudeTaskLabel)),
                 h('div', null, h('span', { className: 'cc-statusLabel' }, tt('claudeStatusLastUse')), h('strong', null, currentClaude ? claudeUseLabel(currentClaude.label) : '—')),
               ),
               h('p', { className: 'cc-claudeStatusNote' }, `${tt('claudeStatusSource')}：${tt('claudeStatusPlugin')}${currentTaskMode ? ` · ${currentTaskMode.label}` : ''}`),
@@ -5009,7 +5080,9 @@ body[data-dsh-claude-style] .cc-panel {
 .cc-claudeStatusGrid strong { overflow-wrap: anywhere; font-size: 12px; font-weight: 600; }
 .cc-statusPill { display: inline-flex; align-items: center; gap: 5px; color: var(--cc-ink-2); font-size: 11.5px; }
 .cc-claudeStatus-running { border-color: var(--cc-accent-line); background: var(--cc-accent-tint); }
-.cc-claudeStatus-unavailable { border-color: var(--cc-warn); }
+.cc-claudeStatus-unavailable,
+.cc-claudeStatus-error,
+.cc-claudeStatus-interrupted { border-color: var(--cc-warn); }
 .cc-claudeStatusNote { margin: 0; color: var(--cc-muted); font-size: 11px; }
 
 .cc-sessionChip .cc-sessionReset + .cc-sessionReset { margin-inline-start: -5px; }

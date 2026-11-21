@@ -357,9 +357,64 @@ function monitorHarness(activeWorkspace = 'new', extraProps = {}) {
     return panel({ ...props, ...extraProps })
   }
   draw()
-  return { draw, setStatus: (status) => { state[state.findIndex((value) => value && Array.isArray(value.items) && !('total' in value))] = status } }
+  return { draw, state, setStatus: (status) => { state[state.findIndex((value) => value && Array.isArray(value.items) && !('total' in value))] = status } }
 }
 const monitorButton = (tree, label) => findNodes(tree, (node) => node.type === 'button' && contains(node, label))[0]
+
+test('Claude status card marks a matching running job as active', () => {
+  const h = monitorHarness()
+  h.state[1] = {
+    cli: { found: true, runnable: true, path: 'C:\\bin\\claude.exe', version: '2.1.0' },
+    desktop: { found: false },
+    proxy: { applicable: false },
+    ccSwitch: { found: false },
+    agentEngine: { requested: 'cli', active: 'cli', sdk: { available: false } },
+  }
+  h.state[3] = { ...h.state[3], projectDir: 'D:\\Projects\\status-demo' }
+  h.state[5] = [{
+    id: 'job-status',
+    kind: 'brief',
+    state: 'running',
+    phase: 'Claude 正在理解需求',
+    startedAt: Date.now(),
+    projectDir: 'D:\\Projects\\status-demo',
+  }]
+  const tree = h.draw()
+  assert.ok(contains(tree, '插件调用中'))
+  assert.ok(contains(tree, 'Claude 正在理解需求'))
+})
+
+test('Claude status refresh reloads jobs as well as detection and sessions', async (t) => {
+  const requests = []
+  let sessionsCalled = false
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    const pathname = new URL(url).pathname
+    requests.push(pathname)
+    if (pathname.endsWith('/detect')) {
+      return new Response(JSON.stringify({
+        cli: { found: true, runnable: true, path: 'C:\\bin\\claude.exe', version: '2.1.0' },
+        desktop: { found: false },
+        proxy: { applicable: false },
+        ccSwitch: { found: false },
+        agentEngine: { requested: 'cli', active: 'cli', sdk: { available: false } },
+      }))
+    }
+    if (pathname.endsWith('/jobs/list')) return new Response(JSON.stringify({ jobs: [] }))
+    if (pathname.endsWith('/task-modes')) return new Response(JSON.stringify({ active: 'execute', items: [] }))
+    return new Response(JSON.stringify({}))
+  })
+  const h = monitorHarness('new', {
+    listClaudeSessions: async () => {
+      sessionsCalled = true
+      return { items: [] }
+    },
+  })
+  await monitorButton(h.draw(), '刷新状态').props.onClick()
+  assert.ok(requests.some((path) => path.endsWith('/jobs/list')), `refresh reads the job list: ${JSON.stringify(requests)}`)
+  assert.equal(sessionsCalled, true, 'refresh reads the session mapping')
+  assert.ok(contains(h.draw(), 'Claude 状态已刷新'))
+})
+
 
 test('home has one compact monitor entry; optional acceptance is off in monitor settings', () => {
   const home = monitorHarness()
@@ -412,6 +467,7 @@ test('session history requests only the selected session and outcome', async (t)
   assert.equal(query.get('status'), 'failed')
   tree = h.draw()
   assert.ok(contains(tree, '测试未通过'))
+  assert.ok(contains(tree, '监工记录已刷新'))
 })
 
 test('desktop tasks use the pending request id, not the session id, for manual drafts', () => {
