@@ -10,7 +10,7 @@ import { apply } from '../../index.js'
  * registry is injected through `ctx.get('agentPresets')`, exactly as DSH
  * exposes it, and `create` records what the Controller was asked for.
  */
-async function harness({ presets } = {}) {
+async function harness({ presets, config } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'claude-preset-'))
   const project = path.join(root, 'demo')
   const { mkdir } = await import('node:fs/promises')
@@ -42,7 +42,7 @@ async function harness({ presets } = {}) {
     approval: { setPolicy() {} },
     userQuestions: { async ask() { throw new Error('unexpected question') } },
   }
-  apply(ctx, { acceptance: { legacyGate: false, gatePolicy: 'off' } })
+  apply(ctx, { acceptance: { legacyGate: false, gatePolicy: 'off' }, ...(config || {}) })
   const call = async (method, endpoint, body) => {
     const response = await routes.get(`${method} /api/claude-on-dsh${endpoint.split('?')[0]}`)(
       new Request(`http://127.0.0.1/api/claude-on-dsh${endpoint}`, {
@@ -131,6 +131,42 @@ test('a host without a preset registry simply offers none', async () => {
     const sent = await h.call('POST', '/dispatch', { ...brief(), projectDir: h.project, agentPreset: 'ptc' })
     assert.equal(sent.status, 200)
     assert.equal('agentPreset' in h.created[0], false)
+  } finally {
+    await h.close()
+  }
+})
+
+test('a configured default this host does not have falls back to the DSH default', async () => {
+  // The shipped row config says `dispatchAgentPreset: claude`, which only
+  // exists when @norman-else/dsh-claude is installed. Without it every dispatch
+  // used to fail with 会话模式不存在; the default must degrade instead.
+  const h = await harness({
+    presets: [
+      { id: 'standard', name: '标准', isDefault: true },
+      { id: 'ptc', name: 'PTC' },
+    ],
+    config: { dispatchAgentPreset: 'claude' },
+  })
+  try {
+    const sent = await h.call('POST', '/dispatch', { ...brief(), projectDir: h.project })
+    assert.equal(sent.status, 200)
+    assert.equal('agentPreset' in h.created[0], false, 'DSH applies its own default')
+    assert.equal(h.prompts.length, 1, 'the task still reaches the session')
+  } finally {
+    await h.close()
+  }
+})
+
+test('an explicit unknown preset still fails when a config default is absent', async () => {
+  const h = await harness({
+    presets: [{ id: 'standard', name: '标准', isDefault: true }],
+    config: { dispatchAgentPreset: '' },
+  })
+  try {
+    const sent = await h.call('POST', '/dispatch', { ...brief(), projectDir: h.project, agentPreset: 'claude' })
+    assert.equal(sent.status, 400)
+    assert.match(sent.body.error.message, /会话模式不存在/)
+    assert.equal(h.created.length, 0)
   } finally {
     await h.close()
   }

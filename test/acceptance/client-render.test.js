@@ -384,6 +384,29 @@ test('Claude status card marks a matching running job as active', () => {
   assert.ok(contains(tree, 'Claude 正在理解需求'))
 })
 
+test('stale failed jobs do not pile up in the top strip', () => {
+  const h = monitorHarness()
+  const long = 60 * 60 * 1000
+  h.state[5] = [
+    { id: 'old-1', kind: 'brief-session', state: 'error', phase: '结束', error: 'DSH 会话模式不存在', startedAt: Date.now() - long, finishedAt: Date.now() - long },
+    { id: 'old-2', kind: 'brief-session', state: 'error', phase: '结束', error: 'DSH 会话模式不存在', startedAt: Date.now() - long, finishedAt: Date.now() - long },
+    { id: 'old-3', kind: 'brief-session', state: 'error', phase: '结束', error: 'DSH 会话模式不存在', startedAt: Date.now() - long, finishedAt: Date.now() - long },
+  ]
+  const tree = h.draw()
+  assert.equal(findNodes(tree, (node) => node.props?.className === 'cc-backgroundJob').length, 0,
+    'failures from an hour ago are not shown as live work')
+})
+
+test('a recent failure is still visible and can be removed', () => {
+  const h = monitorHarness()
+  h.state[5] = [
+    { id: 'fresh-1', kind: 'brief-session', state: 'error', phase: '结束', error: 'boom', startedAt: Date.now(), finishedAt: Date.now() },
+  ]
+  const tree = h.draw()
+  assert.equal(findNodes(tree, (node) => node.props?.className === 'cc-backgroundJob').length, 1)
+  assert.ok(contains(tree, '移除'), 'offers an explicit remove action')
+})
+
 test('Claude status refresh reloads jobs as well as detection and sessions', async (t) => {
   const requests = []
   let sessionsCalled = false
@@ -447,6 +470,38 @@ test('monitor settings wait for explicit save and convert seconds once', async (
   const form = findNodes(h.draw(), (node) => node.props?.className === 'cc-monitorForm')[0]
   await form.props.onSubmit({ preventDefault() {} })
   assert.deepEqual(patches, [{ supervision: { cooldownMs: 15125 } }])
+})
+
+test('supervision overview shows disconnected session status', () => {
+  const h = monitorHarness('supervision')
+  h.setStatus({ enabled: true, items: [{ sessionId: 'session-a', phase: 'retrying', disconnected: true, objective: '检查项目', note: '会话已断开，等待重连。' }] })
+  assert.ok(contains(h.draw(), 'DSH 会话已断开，等待重新连接。'))
+})
+
+test('resume stays clickable when global monitoring is off, and explains why', async (t) => {
+  const calls = []
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    const path = new URL(url).pathname
+    calls.push(`${init?.method || 'GET'} ${path}`)
+    return new Response(JSON.stringify({ active: 'execute', items: [] }))
+  })
+  const h = monitorHarness('supervision')
+  h.setStatus({ enabled: false, items: [{ sessionId: 'session-p', phase: 'paused', objective: '继续项目' }] })
+  const tree = h.draw()
+  assert.ok(contains(tree, '全局监工当前已关闭'), 'the reason is visible instead of a silent dead button')
+  const resume = monitorButton(tree, '恢复监工')
+  assert.equal(resume.props.disabled, false, 'the operator can still ask to resume')
+  await resume.props.onClick()
+  assert.ok(calls.some((call) => call.startsWith('POST') && call.endsWith('/task-modes')),
+    'it switches to Execute mode first so scheduling is not a no-op')
+})
+
+test('a row does not claim to be watching when global monitoring is off', () => {
+  const h = monitorHarness('supervision')
+  h.setStatus({ enabled: false, items: [{ sessionId: 'session-z', phase: 'watching', objective: '待办项目' }] })
+  const tree = h.draw()
+  assert.ok(contains(tree, '未在监工'), 'says it is not monitored instead of 等待下轮')
+  assert.equal(contains(tree, '等待下轮'), false)
 })
 
 test('session history requests only the selected session and outcome', async (t) => {

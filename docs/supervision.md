@@ -4,7 +4,7 @@
 
 ## 触发与结果
 
-监工在 Host 中运行，关闭插件面板不影响监听。它全局订阅 `agent/status`、`agent/disposed` 和 `session/event`，只在主会话结束、停止或意外处置后检查；子智能体、插件为首问新建的内部规划会话和已归档会话不参与。
+监工在 Host 中运行，关闭插件面板不影响监听。它全局订阅 `agent/status`、`agent/error`、`agent/disposed`、`api-session/status`、`api-session/error`、`api-session/added`、`api-session/removed`、`session/disposed` 和 `session/event`。主会话的运行、失败、Agent 可用性变化和终止事件都会进入状态机；会话尚未退出 busy 状态时，终止检查会用退避重试等待状态同步，而不丢弃触发。子智能体、插件为首问新建的内部规划会话和已归档会话不参与项目目标监工。
 
 每次检查包含：原始目标、用户后续明确要求、原生目标状态、最近对话、真实的结束原因、最近工具调用与输出、Git 改动。监工的消息不会变成新的项目目标。上下文是有界摘录，不能据此声称已经完整检查整个仓库；需要更多信息时应等待或让 DSH 补充证据。
 

@@ -82,3 +82,45 @@ test('missing persistence files are initialized atomically', async () => {
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test('a finished job can be dismissed and disappears from the list', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'claude-on-dsh-jobs-'))
+  const file = path.join(dir, 'jobs.json')
+  try {
+    const jobs = createJobs({ file })
+    const failed = jobs.start('sample', async () => { throw new Error('boom') })
+    await delay(5)
+    assert.equal(jobs.list().length, 1)
+    const removed = jobs.dismiss(failed.id)
+    assert.equal(removed.ok, true)
+    assert.equal(jobs.list().length, 0, 'a failed job no longer clutters the strip')
+    await jobs.flush()
+    const saved = JSON.parse(await readFile(file, 'utf8'))
+    assert.deepEqual(saved, [], 'the dismissal is persisted')
+    assert.equal(jobs.dismiss(failed.id).reason, 'not-found')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('a running job cannot be dismissed', async () => {
+  const jobs = createJobs()
+  const hold = new Promise(() => {})
+  const running = jobs.start('slow', () => hold)
+  const result = jobs.dismiss(running.id)
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, 'running')
+  assert.equal(jobs.list().length, 1)
+})
+
+test('clearing finished jobs keeps the one still running', async () => {
+  const jobs = createJobs()
+  jobs.start('a', async () => { throw new Error('x') })
+  jobs.start('b', async () => { throw new Error('y') })
+  await delay(10)
+  const hold = new Promise(() => {})
+  const live = jobs.start('live', () => hold)
+  const cleared = jobs.dismissFinished()
+  assert.equal(cleared.removed, 2)
+  assert.deepEqual(jobs.list().map((item) => item.id), [live.id])
+})

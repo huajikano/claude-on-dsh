@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { attachSupervision } from '../../lib/supervision.js'
-import { buildSupervisionPrompt, migrateWorkflowSettings, turnSnapshot, validateSupervisionDecision, SUPERVISOR_MARKER } from '../../lib/supervision-policy.js'
+import { buildSupervisionPrompt, migrateWorkflowSettings, ownMessage, supervisionMessage, turnSnapshot, validateSupervisionDecision, SUPERVISOR_MARKER } from '../../lib/supervision-policy.js'
 
 const decision = (kind = 'continue') => ({ decision: kind, reason: 'src/app.js 与目标比较', message: '继续补齐剩余目标', evidence: ['src/app.js:1-20'], goalSatisfied: kind === 'complete' })
 const events = (turn = 1, reason = 'completed', final = '尚未完成，需要继续') => [
@@ -26,7 +26,10 @@ async function harness(fn, opts = {}) {
   }
   const create = () => attachSupervision({
     ctx, file, getSettings: () => settings, settleMs: 1,
-    inspect: async () => ({ meta: records.meta, events: records.current, goal: records.goal }),
+    inspect: async () => {
+      if (records.inspectError) throw new Error(records.inspectError)
+      return { meta: records.meta, events: records.current, goal: records.goal }
+    },
     isBusy: () => records.busy,
     overBudget: async () => Boolean(opts.overBudget),
     review: async (snapshot, request) => { records.reviews.push({ snapshot, request }); return opts.review ? opts.review(snapshot, records, request) : decision() },
@@ -37,6 +40,17 @@ async function harness(fn, opts = {}) {
   try { await fn({ monitor, records, file, create, ctx, listeners, setSettings: (value) => { settings = { ...settings, ...value } } }) }
   finally { monitor.dispose(); await monitor.flush(); await rm(dir, { recursive: true, force: true }) }
 }
+
+test('a continuation message is just the next step, and still recognised as ours', () => {
+  const bare = supervisionMessage({ decision: 'continue', reason: '目标未完成', message: '', evidence: [] })
+  assert.equal(bare, `${SUPERVISOR_MARKER} 继续`, 'no reason paragraph, just 继续')
+  assert.equal(ownMessage({ content: [{ type: 'text', text: bare }] }), true,
+    'the marker keeps it from being mistaken for a user message')
+  const specific = supervisionMessage({ decision: 'continue', reason: 'x', message: '补齐手机端布局', evidence: [] })
+  assert.equal(specific, `${SUPERVISOR_MARKER} 补齐手机端布局`)
+  assert.equal(ownMessage({ content: [{ type: 'text', text: '继续' }] }), false,
+    'a bare 继续 typed by the user is still a user message')
+})
 
 test('old defaults migrate to disabled acceptance and global monitoring', () => {
   const cfg = migrateWorkflowSettings({ autoPrompt: true, manualAcceptance: true, autoAcceptance: true })
@@ -203,6 +217,120 @@ test('idle and disposal signals coalesce without an explicit arm call', async ()
     assert.equal(records.reviews.length, 1); assert.equal(records.sends.length, 1)
   })
 })
+
+test('terminal trigger is retried if Host still reports the session busy', async () => {
+  await harness(async ({ monitor, records, listeners }) => {
+    records.busy = true
+    for (const listener of listeners.get('agent/status')) listener({ agent: { id: 's1' }, status: 'running' })
+    for (const listener of listeners.get('agent/status')) listener({ agent: { id: 's1' }, status: 'idle' })
+    setTimeout(() => { records.busy = false }, 30)
+    await delay(1100)
+    await monitor.flush()
+    assert.equal(records.reviews.length, 1)
+    assert.equal(records.sends.length, 1)
+  })
+})
+
+test('agent error signal schedules a review even without a new turn-end event', async () => {
+  await harness(async ({ monitor, records, listeners }) => {
+    for (const listener of listeners.get('agent/error')) listener({ agent: { id: 's1' }, turn: 1, step: 2, error: new Error('transport disconnected') })
+    await delay(30); await monitor.flush()
+    assert.equal(records.reviews.length, 1)
+    assert.equal(records.sends.length, 1)
+  })
+})
+
+test('api-session errors retain nested error details and schedule monitoring', async () => {
+  await harness(async ({ monitor, records, listeners }) => {
+    await monitor.bind('s1', { objective: '实现目标', workspace: 'D:/project' })
+    for (const listener of listeners.get('api-session/error')) listener('s1', { message: 'session transport failed' })
+    const row = monitor.list().items[0]
+    assert.match(row.error, /session transport failed/)
+    await delay(30); await monitor.flush()
+    assert.equal(records.reviews.length, 1)
+  })
+})
+
+test('a disconnected session is probed and recovers on its own when readable again', async () => {
+  await harness(async ({ monitor, records, listeners }) => {
+    await monitor.bind('s1', { objective: '实现目标', workspace: 'D:/project' })
+    records.inspectError = 'session store unavailable'
+    for (const listener of listeners.get('api-session/removed')) listener('s1')
+    await monitor.flush()
+    assert.equal(monitor.list().items[0].disconnected, true)
+    assert.equal(monitor.list().items[0].phase, 'retrying')
+
+    // Still unreadable: stays disconnected, records why, and retries later
+    // instead of waiting forever for an api-session/added that may never come.
+    await monitor.check('s1')
+    await monitor.flush()
+    let row = monitor.list().items[0]
+    assert.equal(row.disconnected, true)
+    assert.match(row.error, /正在重连/)
+    assert.equal(records.reviews.length, 0)
+
+    // Readable again: the probe reconnects without needing an external event.
+    delete records.inspectError
+    await monitor.check('s1')
+    await monitor.flush()
+    row = monitor.list().items[0]
+    assert.equal(row.disconnected, false)
+    assert.equal(records.reviews.length, 1)
+    assert.equal(records.sends.length, 1)
+  })
+})
+
+test('session re-addition also clears the disconnected state', async () => {
+  await harness(async ({ monitor, records, listeners }) => {
+    await monitor.bind('s1', { objective: '实现目标', workspace: 'D:/project' })
+    for (const listener of listeners.get('api-session/removed')) listener('s1')
+    await monitor.flush()
+    assert.equal(monitor.list().items[0].disconnected, true)
+
+    for (const listener of listeners.get('api-session/added')) listener({ sessionId: 's1', agentAvailable: true, running: false, blank: false, updatedAt: Date.now() })
+    await delay(30); await monitor.flush()
+    assert.equal(monitor.list().items[0].disconnected, false)
+    assert.equal(records.reviews.length, 1)
+  })
+})
+
+test('an unreadable snapshot is reported instead of silently dropped', async () => {
+  await harness(async ({ monitor, records }) => {
+    records.meta = {}                                  // no cwd → no workspace
+    await monitor.check('s1')
+    await monitor.flush()
+    const row = monitor.list().items[0]
+    assert.match(row.error, /工作目录/, 'the reason is recorded, not swallowed')
+    assert.equal(row.phase, 'retrying', 'and it retries instead of pretending to wait')
+    assert.equal(records.reviews.length, 0)
+  }, { settings: { maxRetries: 3 } })
+})
+
+test('a session with no goal yet is noted without burning retries', async () => {
+  await harness(async ({ monitor, records }) => {
+    records.current = [{ type: 'assistant/message', seq: 1, data: { content: '你好' } }]
+    await monitor.check('s1')
+    await monitor.flush()
+    const row = monitor.list().items[0]
+    assert.match(row.note, /还没有可判断的目标/)
+    assert.equal(row.failures || 0, 0)
+    assert.equal(records.reviews.length, 0)
+  })
+})
+
+test('a running Agent clears disconnected state without starting a check mid-turn', async () => {
+  await harness(async ({ monitor, records, listeners }) => {
+    await monitor.bind('s1', { objective: '实现目标', workspace: 'D:/project' })
+    for (const listener of listeners.get('api-session/removed')) listener('s1')
+    await monitor.flush()
+    for (const listener of listeners.get('agent/status')) listener({ agent: { id: 's1' }, status: 'running' })
+    await monitor.flush()
+    assert.equal(monitor.list().items[0].disconnected, false)
+    assert.equal(monitor.list().items[0].phase, 'watching')
+    assert.equal(records.reviews.length, 0)
+  })
+})
+
 test('global disable prevents passive signals and manual checks', async () => {
   await harness(async ({ monitor, records, listeners }) => {
     for (const listener of listeners.get('agent/status')) listener({ agent: { id: 's1' }, status: 'idle' })

@@ -1196,7 +1196,7 @@ export function apply(ctx, config = {}) {
   const cliCache = { path: '', version: '', checkedAt: 0, error: '' }
   const detectCache = { at: 0, value: null }
   const staticCache = { at: 0, value: null }
-  const { jobs, start, serialize, list: listJobs, cancel: cancelJob, retry: retryJob } = createJobs({ file: path.join(dshHome(), 'claude-on-dsh', 'jobs.json') })
+  const { jobs, start, serialize, list: listJobs, cancel: cancelJob, retry: retryJob, dismiss: dismissJob, dismissFinished } = createJobs({ file: path.join(dshHome(), 'claude-on-dsh', 'jobs.json') })
 
   const proxyInfo = () => {
     const claudeSettings = readClaudeSettings()
@@ -1518,11 +1518,27 @@ export function apply(ctx, config = {}) {
    * which is not an error.
    */
   async function resolveAgentPreset(requested) {
-    const wanted = text(requested).trim() || settings.dispatchAgentPreset
+    // An explicit choice from the panel is the operator speaking: if it names a
+    // preset this Host does not have, that is worth a hard error.
+    const explicit = text(requested).trim()
+    // The row config is only a default, and it may name a preset that this Host
+    // simply does not install (the shipped default is `claude`, which comes from
+    // @norman-else/dsh-claude). Blocking every dispatch over a stale default
+    // would be wrong, so a missing configured default degrades to "let DSH
+    // decide" with a warning instead of failing the request.
+    const configured = explicit ? '' : text(settings.dispatchAgentPreset).trim()
+    const wanted = explicit || configured
     if (!wanted) return ''
     const items = await availableAgentPresets()
     if (items.length === 0) return ''
     if (items.some((item) => item.id === wanted)) return wanted
+    if (!explicit) {
+      ctx.logger?.warn?.(
+        `[claude-on-dsh] dispatchAgentPreset "${wanted}" 不存在于本机预设；改用 DSH 默认预设。`
+        + ` 当前可选：${items.map((item) => item.id).join('、')}`,
+      )
+      return ''
+    }
     throw userError(
       'DSH 会话模式不存在',
       `请重新选择；当前可选：${items.map((item) => item.name).join('、')}`,
@@ -3035,6 +3051,29 @@ export function apply(ctx, config = {}) {
         })
         if (!result.ok) throw userError(result.reason === 'not-found' ? '任务不存在' : '任务仍在运行', '', result.reason === 'not-found' ? 404 : 409)
         return json({ job: serialize(result.job) })
+      }),
+    },
+    {
+      path: '/jobs/dismiss',
+      methods: ['POST'],
+      handler: endpoint(async (request) => {
+        const body = await readBody(request)
+        const id = text(body.id)
+        if (id) {
+          const result = dismissJob(id)
+          if (!result.ok) {
+            throw userError(
+              result.reason === 'not-found' ? '任务不存在或已清理' : '任务仍在运行，无法移除',
+              '',
+              result.reason === 'not-found' ? 404 : 409,
+            )
+          }
+          return json({ ok: true, jobs: listJobs() })
+        }
+        // No id means "clear everything that already finished", which is what the
+        // panel's clear action sends.
+        const result = dismissFinished()
+        return json({ ok: true, removed: result.removed, jobs: listJobs() })
       }),
     },
     {

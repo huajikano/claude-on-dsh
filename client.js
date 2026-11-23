@@ -202,6 +202,9 @@ window.__ModuleLoader__.load({
          taskModeApplied: '任务模式已应用',
          taskModeDescription: '模式说明',
         supervisorTitle: "Claude 全局监工",
+        supervisorSessionDisconnected: 'DSH 会话已断开，等待重新连接。',
+        supervisorGlobalOffHint: '全局监工当前已关闭（规划/审查模式会关闭它）。点「恢复监工」会自动切到执行模式并恢复该会话。',
+        supervisorGlobalEnabled: '已切到执行模式并开启全局监工。',
         supervisorEnabled: "全局自动监工",
         supervisorHint: "每轮结束或中断后核查目标和进度；判断继续、等待或达标。仅处理主会话，不依赖面板一直打开。",
         supervisorCli: "CLI / SDK · 全自动",
@@ -274,6 +277,7 @@ window.__ModuleLoader__.load({
         supervisorOff: "全局已关闭",
         supervisorUnavailable: "监工状态暂不可用",
         supervisorPhaseWatching: "等待下轮",
+        supervisorPhaseOff: "未在监工",
         supervisorPhaseReviewing: "Claude 检查中",
         supervisorPhaseRetrying: "退避重试",
         supervisorPhaseDesktop: "等待桌面回复",
@@ -358,6 +362,9 @@ window.__ModuleLoader__.load({
         switchToDesktop: '改用桌面版',
         errorTitle: '出错了',
         retry: '重试',
+        jobDismiss: '移除',
+        jobsClear: '清除已结束',
+        jobsCleared: '已清除结束的任务',
         history: '派发记录',
         historyEmpty: '还没有派发记录。',
         cost: '花费',
@@ -576,6 +583,9 @@ window.__ModuleLoader__.load({
          taskModeApplied: 'Task mode applied',
          taskModeDescription: 'Mode details',
         supervisorTitle: "Claude global supervisor",
+        supervisorSessionDisconnected: 'DSH session disconnected; waiting to reconnect.',
+        supervisorGlobalOffHint: 'Global monitoring is off (Plan/Review modes turn it off). Clicking Resume switches to Execute mode and resumes that session.',
+        supervisorGlobalEnabled: 'Switched to Execute mode and turned global monitoring on.',
         supervisorEnabled: "Monitor all main sessions",
         supervisorHint: "Check the original goal after each completed or interrupted turn; continue, wait, or finish. Monitoring runs in the host while the panel is closed.",
         supervisorCli: "CLI / SDK · automatic",
@@ -648,6 +658,7 @@ window.__ModuleLoader__.load({
         supervisorOff: "Globally disabled",
         supervisorUnavailable: "Monitor status unavailable",
         supervisorPhaseWatching: "Watching",
+        supervisorPhaseOff: "Not monitored",
         supervisorPhaseReviewing: "Claude reviewing",
         supervisorPhaseRetrying: "Retry backoff",
         supervisorPhaseDesktop: "Awaiting desktop response",
@@ -732,6 +743,9 @@ window.__ModuleLoader__.load({
         switchToDesktop: 'Use the desktop app',
         errorTitle: 'Something went wrong',
         retry: 'Retry',
+        jobDismiss: 'Remove',
+        jobsClear: 'Clear finished',
+        jobsCleared: 'Finished tasks cleared',
         history: 'Dispatches',
         historyEmpty: 'No dispatches yet.',
         cost: 'cost',
@@ -1538,6 +1552,13 @@ window.__ModuleLoader__.load({
       }
       async function supervisorAction(row, action) {
         try {
+          // 规划/审查任务模式会按设计关掉全局监工，此时单个会话的「恢复监工」会被
+          // 全局开关挡住。用户主动点恢复就是要监工，所以先切到「执行」再恢复，
+          // 而不是留一个点了没反应的死按钮。
+          if (action === 'resume' && supervisionStatus.enabled !== true) {
+            await request('/task-modes', { method: 'POST', body: JSON.stringify({ id: 'execute' }) })
+            setToast(tt('supervisorGlobalEnabled'))
+          }
           await request('/supervision', { method: 'POST', body: JSON.stringify({ sessionId: row.sessionId, action }) })
           await refreshSupervision()
         } catch (error) { fail(error.message, error.hint) }
@@ -1558,6 +1579,9 @@ window.__ModuleLoader__.load({
         finally { setDesktopTaskBusy('') }
       }
       function supervisorPhase(phase) {
+        // With global monitoring off nothing will ever check this row, so saying
+        // "waiting for the next turn" would be a lie.
+        if (phase === 'watching' && supervisionStatus.enabled === false) return tt('supervisorPhaseOff')
         const key = { watching: 'supervisorPhaseWatching', reviewing: 'supervisorPhaseReviewing', retrying: 'supervisorPhaseRetrying',
           'awaiting-desktop': 'supervisorPhaseDesktop', sending: 'supervisorPhaseSending', complete: 'supervisorPhaseComplete',
           paused: 'supervisorPhasePaused', attention: 'supervisorPhaseAttention' }[phase]
@@ -1567,6 +1591,18 @@ window.__ModuleLoader__.load({
       const update = useCallback((patch) => {
         setForm((current) => ({ ...current, ...patch }))
       }, [])
+
+      /* A snapshot can carry a preset this Host does not have (the shipped
+         default `claude` needs @norman-else/dsh-claude). Re-sending it would
+         make /dispatch reject the whole request, so drop it once the real
+         roster is known and fall back to DSH's own default. */
+      useEffect(() => {
+        if (!Array.isArray(agentPresets) || agentPresets.length === 0) return
+        const chosen = form.agentPreset
+        if (!chosen) return
+        if (agentPresets.some((item) => item && item.id === chosen)) return
+        setForm((current) => (current.agentPreset === chosen ? { ...current, agentPreset: '' } : current))
+      }, [agentPresets, form.agentPreset])
 
       /* Keep the in-flight job and the form across a panel switch or reload. */
       useEffect(() => {
@@ -1767,6 +1803,25 @@ window.__ModuleLoader__.load({
         } catch (error) { fail(error.message, error.hint) }
       }
 
+      async function clearBackgroundJobs() {
+        try {
+          const response = await request('/jobs/dismiss', { method: 'POST', body: JSON.stringify({}) })
+          const remaining = Array.isArray(response.jobs) ? response.jobs : []
+          setBackgroundJobs(remaining)
+          setJob((current) => (current && remaining.some((item) => item.id === current.id) ? current : null))
+          if (response.removed) setToast(tt('jobsCleared'))
+        } catch (error) { fail(error.message, error.hint) }
+      }
+
+      async function dismissBackgroundJob(id) {
+        try {
+          const response = await request('/jobs/dismiss', { method: 'POST', body: JSON.stringify({ id }) })
+          const remaining = Array.isArray(response.jobs) ? response.jobs : backgroundJobs.filter((item) => item.id !== id)
+          setBackgroundJobs(remaining)
+          setJob((current) => (current?.id === id ? null : current))
+        } catch (error) { fail(error.message, error.hint) }
+      }
+
       async function resumeBackgroundJob(item) {
         if (!item) return
         let detail = item
@@ -1923,9 +1978,23 @@ window.__ModuleLoader__.load({
         () => new Map(allSessions.map((session) => [session.sessionId, session])),
         [allSessions],
       )
-      const visibleJobs = useMemo(
-        () => backgroundJobs.filter((item) => ['running', 'interrupted', 'error'].includes(item.state)
-          || (item.state === 'done' && ['first-question', 'acceptance-brief', 'acceptance', 'devdoc'].includes(item.kind))).slice(0, 4),
+      /* A finished-and-failed job used to sit in the top strip forever, so a
+         run of failures piled up with only Retry offered. Keep the strip for
+         work that is live or genuinely recent, and let the operator clear it. */
+      const FAILED_STRIP_MS = 15 * 60 * 1000
+      const visibleJobs = useMemo(() => {
+        const now = Date.now()
+        return backgroundJobs.filter((item) => {
+          if (item.state === 'running') return true
+          if (item.state === 'interrupted' || item.state === 'error' || item.state === 'cancelled') {
+            const at = item.finishedAt || item.startedAt || 0
+            return now - at < FAILED_STRIP_MS
+          }
+          return item.state === 'done' && ['first-question', 'acceptance-brief', 'acceptance', 'devdoc'].includes(item.kind)
+        }).slice(0, 4)
+      }, [backgroundJobs, Math.floor(clock / 60)])
+      const clearableJobs = useMemo(
+        () => backgroundJobs.filter((item) => item.state !== 'running'),
         [backgroundJobs],
       )
 
@@ -2423,6 +2492,7 @@ window.__ModuleLoader__.load({
               h('dt', { className: 'cc-monitorLabel' }, tt(label)),
               h('dd', { className: 'cc-monitorNumber' }, monitorStats ? Number(monitorStats[key] || 0).toLocaleString() : '—')))),
           monitorStats?.legacyChecks ? h('div', { className: 'cc-hint' }, `${tt('supervisorLegacyChecks')}: ${monitorStats.legacyChecks}`) : null,
+          supervisionStatus.enabled === false ? h('div', { className: 'cc-inlineWarn' }, tt('supervisorGlobalOffHint')) : null,
           rows.length ? h('div', { className: 'cc-sessionMonitorList' }, rows.map((row) => {
             const resume = ['paused', 'attention', 'complete'].includes(row.phase)
             return h('article', { className: 'cc-sessionMonitor', key: row.sessionId },
@@ -2432,11 +2502,13 @@ window.__ModuleLoader__.load({
               h('div', { className: 'cc-monitorSessionCounts' }, [[tt('supervisorExecuted'), row.stats?.executions],
                 [tt('supervisorContinued'), row.stats?.continued], [tt('supervisorFailed'), row.stats?.failed]]
                 .map(([label, count]) => `${label} ${count || 0}`).join(' · ')),
-              row.note || row.error ? h('div', { className: row.error ? 'cc-inlineWarn' : 'cc-hint' }, row.error || row.note) : null,
+              row.disconnected ? h('div', { className: 'cc-inlineWarn' }, tt('supervisorSessionDisconnected'))
+                : row.note || row.error ? h('div', { className: row.error ? 'cc-inlineWarn' : 'cc-hint' }, row.error || row.note) : null,
               h('div', { className: 'cc-monitorSessionActions' },
                 h(Button, { variant: 'link', onClick: () => openSessionNow(row.sessionId) }, tt('supervisorOpen')),
                 h(Button, { variant: 'link', onClick: () => viewMonitorHistory(row.sessionId) }, tt('supervisorHistoryButton')),
-                h(Button, { variant: 'link', disabled: !supervisionStatus.enabled || row.phase === 'sending',
+                h(Button, { variant: 'link', disabled: row.phase === 'sending',
+                  title: supervisionStatus.enabled === false ? tt('supervisorGlobalOffHint') : '',
                   onClick: () => supervisorAction(row, resume ? 'resume' : 'pause') }, tt(resume ? 'supervisorResume' : 'supervisorPause'))),
               row.phase === 'awaiting-desktop' && row.pending ? renderPendingReview(row) : null)
           })) : h('div', { className: 'cc-monitorBand cc-hint' }, tt('supervisorEmpty')))
@@ -3886,7 +3958,14 @@ window.__ModuleLoader__.load({
                   h('span', null, `${item.phase || item.kind} · ${item.state}`),
                   item.state === 'running' ? h(Button, { variant: 'link', onClick: () => cancelBackgroundJob(item.id) }, tt('cancel')) : null,
                   h(Button, { variant: 'link', onClick: () => resumeBackgroundJob(item) }, item.state === 'running' ? tt('jobOpen') : item.state === 'done' ? tt('jobDetails') : tt('retry')),
+                  item.state !== 'running'
+                    ? h(Button, { variant: 'link', onClick: () => dismissBackgroundJob(item.id) }, tt('jobDismiss'))
+                    : null,
                 )),
+                clearableJobs.length
+                  ? h('div', { className: 'cc-backgroundJobsActions' },
+                      h(Button, { variant: 'link', onClick: clearBackgroundJobs }, tt('jobsClear')))
+                  : null,
               )
             : null,
           h('div', { className: 'cc-toolbarActions' },
@@ -5707,6 +5786,7 @@ body[data-dsh-claude-style] .cc-panel {
 /* ---------- background jobs ---------- */
 
 .cc-backgroundJobs { display: flex; flex-direction: column; gap: 8px; }
+.cc-backgroundJobsActions { display: flex; justify-content: flex-end; }
 .cc-backgroundJob {
   display: flex;
   align-items: center;
