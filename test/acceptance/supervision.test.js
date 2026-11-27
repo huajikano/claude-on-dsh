@@ -421,3 +421,49 @@ test('turn counters and transient tool message ids do not count as project progr
   const a = turnSnapshot('s1', { meta: {}, events: one }), b = turnSnapshot('s1', { meta: {}, events: two })
   assert.notEqual(a.turnKey, b.turnKey); assert.equal(a.progressKey, b.progressKey)
 })
+
+test('adopting a session starts monitoring it even without a passive signal', async () => {
+  await harness(async ({ monitor, records }) => {
+    const row = await monitor.adopt('s1', { objective: '实现登录', workspace: 'D:/project' })
+    assert.equal(row.phase, 'watching')
+    assert.match(row.note, /已由面板接管/)
+    await monitor.flush()
+    await delay(30)
+    await monitor.flush()
+    assert.equal(records.reviews.length, 1, 'the adopted session is checked')
+  })
+})
+
+test('adopting a completed row lets the current turn be judged again', async () => {
+  await harness(async ({ monitor, records }) => {
+    await monitor.check('s1')
+    assert.equal(monitor.list().items[0].phase, 'complete')
+    records.current = events(2)
+    await monitor.adopt('s1', { objective: '继续目标' })
+    await monitor.flush()
+    await delay(30)
+    await monitor.flush()
+    assert.equal(records.reviews.length, 2, 'the new turn is reviewed after adoption')
+  }, { review: () => decision('complete') })
+})
+
+test('adopting an excluded session re-enables it', async () => {
+  await harness(async ({ monitor, records }) => {
+    monitor.exclude('s1')
+    assert.equal(monitor.list().items.length, 0, 'excluded rows are hidden')
+    await monitor.adopt('s1', { objective: '实现登录' })
+    const rows = monitor.list().items
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].phase, 'watching')
+    await monitor.flush()
+    await delay(30)
+    await monitor.flush()
+    assert.equal(records.reviews.length, 1)
+  })
+})
+
+test('adopting requires an id', async () => {
+  await harness(async ({ monitor }) => {
+    await assert.rejects(() => monitor.adopt(''))
+  })
+})

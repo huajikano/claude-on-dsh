@@ -3427,6 +3427,7 @@ export function apply(ctx, config = {}) {
       methods: ['GET'],
       handler: endpoint(async () => {
         const result = await ctx.sessionController.list({}, AbortSignal.timeout(20_000))
+        const watched = new Set(supervisor.list().items.map((row) => row.sessionId))
         const items = latestForkSessions(result.items || [])
           .map((item) => ({
             sessionId: item.sessionId,
@@ -3435,6 +3436,9 @@ export function apply(ctx, config = {}) {
             cwd: item.cwd,
             updatedAt: item.updatedAt,
             running: Boolean(item.running),
+            // Whether the supervisor already knows this session, so the picker
+            // can show "monitored" instead of offering a second takeover.
+            monitored: watched.has(item.sessionId),
           }))
         return json({ items })
       }),
@@ -3695,6 +3699,19 @@ export function apply(ctx, config = {}) {
           const body = await readBody(request)
           const id = text(body.sessionId).trim()
           if (!id) throw userError('缺少监工会话 id', '', 400)
+          if (body.action === 'adopt') {
+            // Manual takeover: the operator names a session that this plugin
+            // never dispatched. Objective and workspace come from the
+            // transcript, so a conversation started in the DSH UI works too.
+            const inspected = await readSession(ctx, id, AbortSignal.timeout(30_000))
+            const workspace = text(inspected.meta && inspected.meta.cwd).trim()
+            const objective = text(body.objective).trim() ||
+              extractTask(Array.isArray(inspected.events) ? inspected.events : []).text
+            if (!objective && !workspace) {
+              throw userError('这个会话还没有可判断的目标', '先在会话里说清要做什么，或手动填写监工目标。', 400)
+            }
+            return json({ item: await supervisor.adopt(id, { objective, workspace, engine: text(body.engine).trim() }) })
+          }
           if (!['pause', 'resume'].includes(body.action)) throw userError('无效监工操作', '', 400)
           return json({ item: await supervisor.control(id, body.action) })
         }

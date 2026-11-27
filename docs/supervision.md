@@ -126,7 +126,21 @@ supervision:
 - 会话状态、待审任务、累计统计和最近 1,000 条已结束记录保存在 `$DSH_HOME/claude-on-dsh/supervision.json`；保留尚未结束的任务。桥接状态和回执位于同目录下的 `desktop-bridge`。
 - `GET /supervision`：当前监工状态和统计。
 - `GET /supervision/history`：可选 `sessionId`、`status`、`limit`；用 `nextCursor` 作为下一页的 `before`。
-- `POST /supervision`：`{ sessionId, action: 'pause'|'resume' }`。
+- `POST /supervision`：`{ sessionId, action: 'pause'|'resume' }`；`action: 'adopt'` 用于接管任意已有会话（可附带 `objective`、`engine`，省略时目标取自会话首条用户消息）。
+
+## 接管任意会话
+
+监工的行通常由被动信号创建，因此本插件没有派发过的会话此前无法纳入监工——包括在 DSH 界面里直接新建、从未经过首问的对话。
+
+面板「监工 → 接管会话」提供显式入口：
+
+- 列出当前 Host 的全部主会话（已合并 fork 链，子智能体不参与）；
+- 选择任意一条点「开始监工」，插件用 `readSession` 读取该会话，目标取首条真实用户消息，工作目录取会话 header 的 `cwd`；
+- 该行立即进入 `watching` 并安排一次检查，不必等下一次 `turn/end`；
+- 已结束（`complete`）或已被排除（`excluded`）的行会被重新激活，并清空 `lastTurnKey`，让当前轮次可以重新判定；仍在运行的行保留 `lastTurnKey`，避免同一轮重复发送；
+- 会话读不到时返回 404，没有目标也没有工作目录时返回 400，不会凭空造一个监工行。
+
+`GET /sessions` 的每一项带 `monitored` 字段，面板据此把已接管的会话显示为「已在监工」并禁用按钮。
 - `GET /supervision/desktop/status`：检测应用、配置与 MCP 握手。`POST` 的 `configure` 操作只写用户确认过的桌面配置。
 - `POST /supervision/desktop`：打开待审任务或提交带 `requestId` 的决策。
 - `GET/POST /task-modes`：读取或应用 `plan`、`execute`、`review` 个人模式。

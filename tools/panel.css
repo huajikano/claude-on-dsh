@@ -861,6 +861,15 @@ body[data-dsh-claude-style] .cc-panel {
   cursor: pointer;
 }
 .cc-sessionPick:hover { border-color: var(--cc-accent-line); background: var(--cc-accent-tint); }
+/* A row that carries its own action button is a container, not a button. */
+.cc-sessionPickRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  cursor: default;
+}
+.cc-sessionPickRow:hover { border-color: var(--cc-line); background: var(--cc-paper); }
 .cc-sessionPickInfo { display: flex; align-items: baseline; gap: 8px; min-inline-size: 0; }
 .cc-sessionPickPath { color: var(--cc-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cc-sessionPickerMeta { color: var(--cc-muted); font-size: 11.5px; }

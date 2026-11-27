@@ -206,6 +206,15 @@ window.__ModuleLoader__.load({
         supervisorGlobalOffHint: '全局监工当前已关闭（规划/审查模式会关闭它）。点「恢复监工」会自动切到执行模式并恢复该会话。',
         supervisorGlobalEnabled: '已切到执行模式并开启全局监工。',
         supervisorEnabled: "全局自动监工",
+        supervisorAdoptButton: '接管会话',
+        supervisorAdoptTitle: '接管已有会话',
+        supervisorAdoptHint: '选择任意 DSH 会话，让监工接手它的完成、续跑和中断处理。目标与工作目录取自会话本身；不需要经过首问或由本插件派发。',
+        supervisorAdoptAction: '开始监工',
+        supervisorAdoptRefresh: '刷新列表',
+        supervisorAdoptLoading: '正在读取会话…',
+        supervisorAdoptEmpty: '没有找到可接管的会话。',
+        supervisorAdopted: '已在监工',
+        supervisorAdoptedToast: '已接管该会话，监工开始检查',
         supervisorSleepMode: '睡眠托管（无人值守）',
         supervisorSleepModeHint: '开启后强制使用 CLI 监工，自动处理主会话的完成、续跑和中断；不会等待你的确认。仍受每日预算、无进展上限和续跑上限约束。',
         supervisorSleepBudgetRequired: '开启睡眠托管前，请先设置大于 0 的每日 Claude 预算。',
@@ -594,6 +603,15 @@ window.__ModuleLoader__.load({
         supervisorGlobalOffHint: 'Global monitoring is off (Plan/Review modes turn it off). Clicking Resume switches to Execute mode and resumes that session.',
         supervisorGlobalEnabled: 'Switched to Execute mode and turned global monitoring on.',
         supervisorEnabled: "Monitor all main sessions",
+        supervisorAdoptButton: 'Take over',
+        supervisorAdoptTitle: 'Take over an existing conversation',
+        supervisorAdoptHint: 'Pick any DSH conversation and let the supervisor handle its completion, continuation and interruptions. The objective and workspace come from the conversation itself — it does not need a first question or a dispatch from this plugin.',
+        supervisorAdoptAction: 'Start monitoring',
+        supervisorAdoptRefresh: 'Refresh list',
+        supervisorAdoptLoading: 'Reading conversations…',
+        supervisorAdoptEmpty: 'No conversation to take over was found.',
+        supervisorAdopted: 'Monitored',
+        supervisorAdoptedToast: 'Conversation taken over; the supervisor is checking it',
         supervisorSleepMode: 'Sleep mode (unattended)',
         supervisorSleepModeHint: 'Forces the CLI monitor to handle main-session completion, continuation, and interruption while you are away. Budget, no-progress, and round limits still apply.',
         supervisorSleepBudgetRequired: 'Set a daily Claude budget above 0 before enabling sleep mode.',
@@ -1479,6 +1497,10 @@ window.__ModuleLoader__.load({
       const [supervisionStatus, setSupervisionStatus] = useState({ items: [] })
       const [supervisionError, setSupervisionError] = useState('')
       const [supervisionView, setSupervisionView] = useState('overview')
+      const [adoptSearch, setAdoptSearch] = useState('')
+      const [adoptBusy, setAdoptBusy] = useState(false)
+      const [adoptBusyId, setAdoptBusyId] = useState('')
+      const [adoptError, setAdoptError] = useState('')
       const [settingsDraft, setSettingsDraft] = useState({})
       const [settingsBusy, setSettingsBusy] = useState(false)
       const [desktopStatus, setDesktopStatus] = useState(null)
@@ -1594,6 +1616,37 @@ window.__ModuleLoader__.load({
         setSupervisionSession(sessionId)
         setSupervisionFilter('')
         setSupervisionView('history')
+      }
+      async function refreshAdoptList() {
+        if (adoptBusy) return
+        setAdoptBusy(true)
+        setAdoptError('')
+        try {
+          const data = await listSessions()
+          setAllSessions(Array.isArray(data.items) ? data.items : [])
+          await refreshSupervision()
+        } catch (error) {
+          setAdoptError(error.message)
+        } finally {
+          setAdoptBusy(false)
+        }
+      }      async function adoptSession(item) {
+        if (!item || adoptBusy) return
+        setAdoptBusy(true)
+        setAdoptBusyId(item.sessionId)
+        setAdoptError('')
+        try {
+          await request('/supervision', { method: 'POST', body: JSON.stringify({ sessionId: item.sessionId, action: 'adopt' }) })
+          setToast(tt('supervisorAdoptedToast'))
+          await refreshSupervision()
+          const data = await listSessions()
+          setAllSessions(Array.isArray(data.items) ? data.items : [])
+        } catch (error) {
+          setAdoptError(error.message)
+        } finally {
+          setAdoptBusy(false)
+          setAdoptBusyId('')
+        }
       }
       async function supervisorAction(row, action) {
         try {
@@ -2555,6 +2608,7 @@ window.__ModuleLoader__.load({
             h(Chip, { on: supervisionStatus.enabled === true, label: supervisionStatus.sleepMode ? tt('supervisorSleepActive') : supervisionStatus.enabled === undefined ? tt('supervisorUnavailable')
               : tt(supervisionStatus.enabled ? 'supervisorWaiting' : 'supervisorOff') }),
             supervisionStatus.engine === 'desktop' ? h(Button, { variant: 'link', onClick: () => setSupervisionView('settings') }, connectionLabel) : null,
+            h(Button, { variant: 'link', onClick: () => setSupervisionView('adopt') }, tt('supervisorAdoptButton')),
             h(Button, { variant: 'link', onClick: () => viewMonitorHistory() }, `${tt('supervisorHistoryButton')} (${monitorStats?.retainedRecords || 0})`)),
           h('dl', { className: 'cc-monitorStats', title: tt('supervisorCountHint') }, tallies.map(([key, label]) =>
             h('div', { className: 'cc-monitorStat', key },
@@ -2584,14 +2638,55 @@ window.__ModuleLoader__.load({
           })) : h('div', { className: 'cc-monitorBand cc-hint' }, tt('supervisorEmpty')))
       }
 
+      /**
+       * Take over any existing DSH conversation, including one this plugin
+       * never dispatched. Previously a row only appeared through passive
+       * signals, so a session started in the DSH UI had no way in.
+       */
+      function renderSupervisionAdopt() {
+        const search = adoptSearch.trim().toLowerCase()
+        const items = allSessions.filter((item) => !search
+          || `${item.title || ''} ${item.cwd || ''} ${item.sessionId}`.toLowerCase().includes(search)).slice(0, 60)
+        return h('section', { className: 'cc-monitorHistoryPage' },
+          h('div', { className: 'cc-monitorSectionHead' },
+            h('h2', { className: 'cc-cardTitle' }, tt('supervisorAdoptTitle')),
+            h(Button, { variant: 'ghost', busy: adoptBusy, disabled: adoptBusy, onClick: refreshAdoptList }, tt('supervisorAdoptRefresh'))),
+          h('p', { className: 'cc-hint' }, tt('supervisorAdoptHint')),
+          adoptError ? h('div', { className: 'cc-inlineWarn', role: 'alert' }, adoptError) : null,
+          h('input', {
+            className: 'cc-input', type: 'search', value: adoptSearch,
+            placeholder: tt('sessionSearch'),
+            onChange: (event) => setAdoptSearch(event.target.value),
+          }),
+          items.length
+            ? h('div', { className: 'cc-sessionPicker' }, items.map((item) => h('div', {
+              key: item.sessionId, className: 'cc-sessionPick cc-sessionPickRow',
+            },
+              h('span', { className: 'cc-sessionPickInfo' },
+                h('span', { className: 'cc-recordTitle', title: sessionLabel(item) }, sessionLabel(item)),
+                item.cwd ? h('span', { className: 'cc-sessionPickPath', title: item.cwd }, item.cwd) : null),
+              h('span', { className: 'cc-sessionPickerMeta' },
+                `${item.running ? tt('sessionRunning') : timeAgo(item.updatedAt, tt)} · ${item.sessionId.slice(-6)}`),
+              h(Button, {
+                variant: item.monitored ? 'link' : 'primary',
+                busy: adoptBusy && adoptBusyId === item.sessionId,
+                disabled: Boolean(adoptBusy) || item.monitored === true,
+                onClick: () => adoptSession(item),
+              }, item.monitored ? tt('supervisorAdopted') : tt('supervisorAdoptAction')))))
+            : h('div', { className: 'cc-monitorBand cc-hint' },
+              adoptBusy ? tt('supervisorAdoptLoading') : tt('supervisorAdoptEmpty')))
+      }
+
       function renderSupervisionPage() {
         return h('div', { className: 'cc-supervisionPage' },
           h('nav', { className: 'cc-modeTabs cc-monitorNav', 'aria-label': tt('supervisorTitle') },
-            [['overview', 'supervisorOverview'], ['history', 'supervisorHistoryButton'], ['settings', 'supervisorSettingsButton']].map(([key, label]) =>
+            [['overview', 'supervisorOverview'], ['adopt', 'supervisorAdoptButton'], ['history', 'supervisorHistoryButton'], ['settings', 'supervisorSettingsButton']].map(([key, label]) =>
               h('button', { type: 'button', key, className: supervisionView === key ? 'on' : '', 'aria-pressed': supervisionView === key,
                 onClick: () => setSupervisionView(key) }, tt(label)))),
           supervisionError || supervisionStatus.error ? h('div', { className: 'cc-inlineWarn', role: 'alert' }, supervisionError || supervisionStatus.error) : null,
-          supervisionView === 'settings' ? renderSupervisionSettings() : supervisionView === 'history' ? renderSupervisionHistory() : renderSupervisionOverview())
+          supervisionView === 'settings' ? renderSupervisionSettings()
+            : supervisionView === 'adopt' ? renderSupervisionAdopt()
+              : supervisionView === 'history' ? renderSupervisionHistory() : renderSupervisionOverview())
       }
 
 
@@ -5870,6 +5965,15 @@ body[data-dsh-claude-style] .cc-panel {
   cursor: pointer;
 }
 .cc-sessionPick:hover { border-color: var(--cc-accent-line); background: var(--cc-accent-tint); }
+/* A row that carries its own action button is a container, not a button. */
+.cc-sessionPickRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  cursor: default;
+}
+.cc-sessionPickRow:hover { border-color: var(--cc-line); background: var(--cc-paper); }
 .cc-sessionPickInfo { display: flex; align-items: baseline; gap: 8px; min-inline-size: 0; }
 .cc-sessionPickPath { color: var(--cc-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cc-sessionPickerMeta { color: var(--cc-muted); font-size: 11.5px; }

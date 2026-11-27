@@ -11,7 +11,7 @@ import { createInterface } from 'node:readline'
 import { PassThrough } from 'node:stream'
 import { DesktopSupervisionBridge, DESKTOP_MCP_NAME } from '../../lib/desktop-supervision-bridge.js'
 
-async function setup(t, { desktop = false, saved = {}, native = null, engine = 'sdk' } = {}) {
+async function setup(t, { desktop = false, saved = {}, native = null, engine = 'sdk', unreadable = '' } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'cod-monitor-routes-'))
   const envKeys = ['DSH_HOME', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PATH']
   const previous = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]))
@@ -57,7 +57,10 @@ async function setup(t, { desktop = false, saved = {}, native = null, engine = '
     userQuestions: { ask: async () => { throw new Error('unexpected question') } },
     workspaceRegistry: {},
     sessionController: {
-      inspect: async () => ({ meta: { id: agent.id, cwd: workspace }, events }),
+      inspect: async (sessionId) => {
+        if (unreadable && sessionId === unreadable) throw Object.assign(new Error('session not found'), { status: 404 })
+        return { meta: { id: agent.id, cwd: workspace }, events }
+      },
       prompt: async (request) => { sent.push(request); return { accepted: true } },
     },
   }
@@ -246,4 +249,23 @@ test('Desktop MCP initializes over stdio and returns one decision to the Host', 
     try { await closed } finally { clearTimeout(deadline); lines.close() }
   }
   assert.equal((await h.invoke('GET', '/supervision/desktop/status')).body.connected, false)
+})
+
+test('a session the plugin never dispatched can be taken over by id', async (t) => {
+  const h = await setup(t)
+  const adopted = await h.invoke('POST', '/supervision', { sessionId: 'session-main', action: 'adopt' })
+  assert.equal(adopted.status, 200)
+  assert.equal(adopted.body.item.sessionId, 'session-main')
+  assert.match(adopted.body.item.note, /已由面板接管/)
+  // The objective comes from the transcript when the caller does not supply one.
+  assert.match(adopted.body.item.objective, /完成目标文件/)
+  h.emitEnd()
+  await waitFor(async () => (await h.invoke('GET', '/supervision')).body.items.some((row) => row.phase === 'complete'))
+  assert.equal(h.sent.length, 1)
+})
+
+test('adopt rejects a session that cannot be read', async (t) => {
+  const h = await setup(t, { unreadable: 'session-unknown' })
+  const response = await h.invoke('POST', '/supervision', { sessionId: 'session-unknown', action: 'adopt' })
+  assert.equal(response.status, 404)
 })
