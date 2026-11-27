@@ -206,6 +206,10 @@ window.__ModuleLoader__.load({
         supervisorGlobalOffHint: '全局监工当前已关闭（规划/审查模式会关闭它）。点「恢复监工」会自动切到执行模式并恢复该会话。',
         supervisorGlobalEnabled: '已切到执行模式并开启全局监工。',
         supervisorEnabled: "全局自动监工",
+        supervisorSleepMode: '睡眠托管（无人值守）',
+        supervisorSleepModeHint: '开启后强制使用 CLI 监工，自动处理主会话的完成、续跑和中断；不会等待你的确认。仍受每日预算、无进展上限和续跑上限约束。',
+        supervisorSleepBudgetRequired: '开启睡眠托管前，请先设置大于 0 的每日 Claude 预算。',
+        supervisorSleepActive: '睡眠托管已接管：CLI 自动监工运行中',
         supervisorHint: "每轮结束或中断后核查目标和进度；判断继续、等待或达标。仅处理主会话，不依赖面板一直打开。",
         supervisorCli: "CLI / SDK · 全自动",
         supervisorDesktop: 'Claude Desktop · MCP / 手动回填',
@@ -361,6 +365,9 @@ window.__ModuleLoader__.load({
         switchToCli: '改用 CLI 自动生成',
         switchToDesktop: '改用桌面版',
         errorTitle: '出错了',
+        errorDetails: '详细的失败信息',
+        errorCommand: '实际执行的命令',
+        errorLogFile: '完整日志',
         retry: '重试',
         jobDismiss: '移除',
         jobsClear: '清除已结束',
@@ -587,6 +594,10 @@ window.__ModuleLoader__.load({
         supervisorGlobalOffHint: 'Global monitoring is off (Plan/Review modes turn it off). Clicking Resume switches to Execute mode and resumes that session.',
         supervisorGlobalEnabled: 'Switched to Execute mode and turned global monitoring on.',
         supervisorEnabled: "Monitor all main sessions",
+        supervisorSleepMode: 'Sleep mode (unattended)',
+        supervisorSleepModeHint: 'Forces the CLI monitor to handle main-session completion, continuation, and interruption while you are away. Budget, no-progress, and round limits still apply.',
+        supervisorSleepBudgetRequired: 'Set a daily Claude budget above 0 before enabling sleep mode.',
+        supervisorSleepActive: 'Sleep mode active: CLI monitor is in charge',
         supervisorHint: "Check the original goal after each completed or interrupted turn; continue, wait, or finish. Monitoring runs in the host while the panel is closed.",
         supervisorCli: "CLI / SDK · automatic",
         supervisorDesktop: 'Claude Desktop · MCP / manual reply',
@@ -742,6 +753,9 @@ window.__ModuleLoader__.load({
         switchToCli: 'Use the CLI instead',
         switchToDesktop: 'Use the desktop app',
         errorTitle: 'Something went wrong',
+        errorDetails: 'Failure details',
+        errorCommand: 'Command that ran',
+        errorLogFile: 'Full log',
         retry: 'Retry',
         jobDismiss: 'Remove',
         jobsClear: 'Clear finished',
@@ -825,6 +839,7 @@ window.__ModuleLoader__.load({
         const message = (data && data.error && data.error.message) || `HTTP ${response.status}`
         const error = new Error(message)
         error.hint = (data && data.error && data.error.hint) || ''
+        error.details = (data && data.error && data.error.details) || null
         throw error
       }
       return data
@@ -978,6 +993,26 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** A failed CLI run: the short message plus the captured argv/stderr. */
+    function ErrorDetails({ details, tt }) {
+      if (!details || (!details.stderr && !details.argv)) return null
+      const head = [
+        details.exitCode !== undefined ? `exit ${details.exitCode}` : '',
+        details.executable || '',
+        details.durationMs ? formatDuration(details.durationMs) : '',
+        details.logFile ? `${tt('errorLogFile')}: ${details.logFile}` : '',
+      ].filter(Boolean).join(' · ')
+      return h('details', { className: 'cc-errorDetails' },
+        h('summary', null, tt('errorDetails'), head ? ` — ${head}` : ''),
+        details.argv ? h('div', { className: 'cc-errorDetailsLabel' }, tt('errorCommand')) : null,
+        details.argv ? h('pre', { className: 'cc-pre cc-errorDetailsBody' }, details.argv.join(' ')) : null,
+        details.stderr ? h('div', { className: 'cc-errorDetailsLabel' }, 'stderr') : null,
+        details.stderr ? h('pre', { className: 'cc-pre cc-errorDetailsBody' }, details.stderr) : null,
+        details.stdout ? h('div', { className: 'cc-errorDetailsLabel' }, 'stdout') : null,
+        details.stdout ? h('pre', { className: 'cc-pre cc-errorDetailsBody' }, details.stdout) : null,
+      )
+    }
+
     function Notice({ notice, tt, onRetry }) {
       if (!notice) return null
       return h(
@@ -986,6 +1021,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'cc-noticeTitle' }, tt('errorTitle')),
         h('div', { className: 'cc-noticeBody' }, notice.message),
         notice.hint ? h('div', { className: 'cc-noticeHint' }, notice.hint) : null,
+        h(ErrorDetails, { details: notice.details, tt }),
         onRetry
           ? h(
               'div',
@@ -1417,6 +1453,11 @@ window.__ModuleLoader__.load({
       const [reviewSelected, setReviewSelected] = useState(null)
       const [recordBusy, setRecordBusy] = useState(false)
       const [recordError, setRecordError] = useState('')
+      const [startingBrief, setStartingBrief] = useState(false)
+      const [copyBusy, setCopyBusy] = useState(false)
+      const [continuingDesktop, setContinuingDesktop] = useState(false)
+      const [browsing, setBrowsing] = useState(false)
+      const [archiving, setArchiving] = useState(false)
       const [devDocOpen, setDevDocOpen] = useState(false)
       const [devDoc, setDevDoc] = useState(null)
       const [devDocDraft, setDevDocDraft] = useState('')
@@ -1430,7 +1471,7 @@ window.__ModuleLoader__.load({
       }, [form.projectDir, devDoc && devDoc.contentHash, devDoc && devDoc.status, devDocDraft])
       const [reviewSettings, setReviewSettings] = useState({
         manualAcceptance: false,
-        supervision: { enabled: true, engine: 'cli', cooldownMs: 30000, retryBaseMs: 60000, maxRetries: 3, maxNoProgress: 3, maxRounds: 50 },
+        supervision: { enabled: true, sleepMode: false, engine: 'cli', cooldownMs: 30000, retryBaseMs: 60000, maxRetries: 3, maxNoProgress: 3, maxRounds: 50 },
         autoPrompt: false,
         defaultAction: 'none',
         dailyBudgetUsd: 5,
@@ -1535,6 +1576,10 @@ window.__ModuleLoader__.load({
             patch[key] = key === 'dailyBudgetUsd' ? Number(value) : value
           } else patch.supervision[key] = key.endsWith('Ms') ? Number(value) * 1000 : key.startsWith('max') ? Number(value) : value
         }
+        if (patch.supervision.sleepMode === true && !(Number(patch.dailyBudgetUsd ?? reviewSettings.dailyBudgetUsd) > 0)) {
+          fail(tt('supervisorSleepBudgetRequired'))
+          return
+        }
         setSettingsBusy(true)
         try {
           const result = await saveSettings(patch)
@@ -1542,7 +1587,7 @@ window.__ModuleLoader__.load({
           setSettingsDraft({})
           setToast(tt('supervisorSaved'))
           await refreshSupervision()
-        } catch (error) { fail(error.message, error.hint) }
+        } catch (error) { fail(error.message, error.hint, error.details) }
         finally { setSettingsBusy(false) }
       }
       function viewMonitorHistory(sessionId = '') {
@@ -1561,7 +1606,7 @@ window.__ModuleLoader__.load({
           }
           await request('/supervision', { method: 'POST', body: JSON.stringify({ sessionId: row.sessionId, action }) })
           await refreshSupervision()
-        } catch (error) { fail(error.message, error.hint) }
+        } catch (error) { fail(error.message, error.hint, error.details) }
       }
       async function desktopSupervisor(row, action) {
         const requestId = row.pending.id
@@ -1575,7 +1620,7 @@ window.__ModuleLoader__.load({
           if (action === 'open') await copyBrief(result.prompt, false)
           else setDesktopReplyDraft((current) => current?.id === requestId ? null : current)
           await refreshSupervision()
-        } catch (error) { fail(error.message, error.hint) }
+        } catch (error) { fail(error.message, error.hint, error.details) }
         finally { setDesktopTaskBusy('') }
       }
       function supervisorPhase(phase) {
@@ -1800,7 +1845,7 @@ window.__ModuleLoader__.load({
             setJob((current) => current?.id === id ? response.job : current)
             setBackgroundJobs((current) => current.map((item) => item.id === id ? response.job : item))
           }
-        } catch (error) { fail(error.message, error.hint) }
+        } catch (error) { fail(error.message, error.hint, error.details) }
       }
 
       async function clearBackgroundJobs() {
@@ -1810,7 +1855,7 @@ window.__ModuleLoader__.load({
           setBackgroundJobs(remaining)
           setJob((current) => (current && remaining.some((item) => item.id === current.id) ? current : null))
           if (response.removed) setToast(tt('jobsCleared'))
-        } catch (error) { fail(error.message, error.hint) }
+        } catch (error) { fail(error.message, error.hint, error.details) }
       }
 
       async function dismissBackgroundJob(id) {
@@ -1819,7 +1864,7 @@ window.__ModuleLoader__.load({
           const remaining = Array.isArray(response.jobs) ? response.jobs : backgroundJobs.filter((item) => item.id !== id)
           setBackgroundJobs(remaining)
           setJob((current) => (current?.id === id ? null : current))
-        } catch (error) { fail(error.message, error.hint) }
+        } catch (error) { fail(error.message, error.hint, error.details) }
       }
 
       async function resumeBackgroundJob(item) {
@@ -1835,7 +1880,7 @@ window.__ModuleLoader__.load({
             setJob(response.job)
             setBackgroundJobs((current) => [response.job, ...current.filter((entry) => entry.id !== response.job.id)])
             return
-          } catch (error) { fail(error.message, error.hint); return }
+          } catch (error) { fail(error.message, error.hint, error.details); return }
         }
         if (detail.kind === 'first-question') {
           setFirstQuestion({ entry: { sessionId: detail.payload?.sessionId || '', projectDir: detail.payload?.projectDir || '', title: detail.payload?.title || '' }, requirement: detail.payload?.requirement || '', busy: detail.state === 'running', error: detail.error || '', generated: detail.state === 'done' ? detail.result : null, answer: detail.payload?.answer || '', draft: detail.payload?.draft || '', draftTemplate: detail.payload?.draftTemplate || '', draftEdited: Boolean(detail.payload?.draftEdited), jobId: detail.id })
@@ -1998,17 +2043,19 @@ window.__ModuleLoader__.load({
         [backgroundJobs],
       )
 
-      function fail(message, hint) {
-        setNotice({ message, hint: hint || '' })
+      function fail(message, hint, details) {
+        setNotice({ message, hint: hint || '', details: details || null })
       }
 
       async function startBrief() {
+        if (startingBrief) return
         if (form.goal.trim().length < 4) {
           fail(tt('requiredGoal'))
           return
         }
         setNotice(null)
         setDispatch({ state: 'idle' })
+        setStartingBrief(true)
         try {
           const started = await startBackgroundJob(inSession ? 'brief-session' : 'brief', {
             projectDir: form.projectDir,
@@ -2023,7 +2070,9 @@ window.__ModuleLoader__.load({
           setAnswer('')
           setPhase('brief')
         } catch (error) {
-          fail(error.message, error.hint)
+          fail(error.message, error.hint, error.details)
+        } finally {
+          setStartingBrief(false)
         }
       }
 
@@ -2049,7 +2098,7 @@ window.__ModuleLoader__.load({
           })
           setPhase('answer')
         } catch (error) {
-          fail(error.message, error.hint)
+          fail(error.message, error.hint, error.details)
         }
       }
 
@@ -2091,25 +2140,31 @@ window.__ModuleLoader__.load({
             await refreshSessions(data.sessionId)
           } catch {}
         } catch (error) {
-          setDispatch({ state: 'error', message: error.message, hint: error.hint })
+          setDispatch({ state: 'error', message: error.message, hint: error.hint, details: error.details })
         }
       }
 
       async function browse() {
+        if (browsing) return
+        setBrowsing(true)
         try {
           const chosen = await pickDirectory()
           if (chosen) update({ projectDir: chosen })
         } catch (error) {
           fail(error.message, tt('openFailed'))
+        } finally {
+          setBrowsing(false)
         }
       }
 
       async function openDesktopFlow() {
+        if (startingBrief) return
         if (form.goal.trim().length < 4) {
           fail(tt('requiredGoal'))
           return
         }
         setNotice(null)
+        setStartingBrief(true)
         try {
           const data = await request('/prompt', {
             method: 'POST',
@@ -2135,11 +2190,15 @@ window.__ModuleLoader__.load({
             fail(tt('copyFailed'))
           }
         } catch (error) {
-          fail(error.message, error.hint)
+          fail(error.message, error.hint, error.details)
+        } finally {
+          setStartingBrief(false)
         }
       }
 
       async function copyBrief(value, launch) {
+        if (copyBusy) return
+        setCopyBusy(true)
         try {
           const data = await request('/desktop', {
             method: 'POST',
@@ -2149,16 +2208,20 @@ window.__ModuleLoader__.load({
           if (data && data.copied) setToast(tt('copied'))
           else fail(tt('copyFailed'))
         } catch (error) {
-          fail(error.message, error.hint)
+          fail(error.message, error.hint, error.details)
+        } finally {
+          setCopyBusy(false)
         }
       }
 
       async function continueFromDesktop() {
+        if (continuingDesktop) return
         if (desktopReply.trim().length === 0) {
           fail(tt('desktopNoReply'))
           return
         }
         const title = form.projectName || '新项目'
+        setContinuingDesktop(true)
         setRefined({
           projectTitle: title,
           summary: '',
@@ -2171,7 +2234,8 @@ window.__ModuleLoader__.load({
           const data = await request('/prompts/handoff', { method: 'POST', body: JSON.stringify({ title, body: desktopReply.trim() }) })
           setPromptText(data.content)
           setPhase('refined')
-        } catch (error) { fail(error.message, error.hint) }
+        } catch (error) { fail(error.message, error.hint, error.details) }
+        finally { setContinuingDesktop(false) }
       }
 
       async function openCcSwitch() {
@@ -2179,7 +2243,7 @@ window.__ModuleLoader__.load({
           await request('/cc-switch', { method: 'POST', body: '{}' })
           setToast(tt('statusCcSwitch'))
         } catch (error) {
-          fail(error.message, error.hint)
+          fail(error.message, error.hint, error.details)
         }
       }
 
@@ -2393,8 +2457,13 @@ window.__ModuleLoader__.load({
             h('fieldset', { className: 'cc-monitorBand', disabled: settingsBusy },
               h('legend', { className: 'cc-cardTitle' }, tt('supervisorSettingsButton')),
               toggle('enabled', tt('supervisorEnabled'), cfg.enabled),
+              toggle('sleepMode', tt('supervisorSleepMode'), cfg.sleepMode),
+              cfg.sleepMode || settingsDraft.sleepMode === true
+                ? h('div', { className: 'cc-inlineWarn' }, tt('supervisorSleepModeHint'))
+                : null,
               h('label', { className: 'cc-field cc-monitorEngine' }, h('span', { className: 'cc-label' }, tt('supervisorEngineLabel')),
-                h('select', { className: 'cc-select', value: settingsDraft.engine ?? cfg.engine,
+                h('select', { className: 'cc-select', value: settingsDraft.sleepMode === true || cfg.sleepMode ? 'cli' : (settingsDraft.engine ?? cfg.engine),
+                  disabled: settingsDraft.sleepMode === true || cfg.sleepMode,
                   onChange: (event) => editMonitorSetting('engine', event.target.value) },
                   h('option', { value: 'cli' }, tt('supervisorCli')), h('option', { value: 'desktop' }, tt('supervisorDesktop')))),
               h('div', { className: 'cc-monitorBoundGrid' },
@@ -2483,7 +2552,7 @@ window.__ModuleLoader__.load({
           ['completed', 'supervisorCompleted'], ['failed', 'supervisorFailed'], ['pendingDesktop', 'supervisorPending']]
         return h('section', { className: 'cc-supervisionOverview' },
           h('div', { className: 'cc-monitorSectionHead' },
-            h(Chip, { on: supervisionStatus.enabled === true, label: supervisionStatus.enabled === undefined ? tt('supervisorUnavailable')
+            h(Chip, { on: supervisionStatus.enabled === true, label: supervisionStatus.sleepMode ? tt('supervisorSleepActive') : supervisionStatus.enabled === undefined ? tt('supervisorUnavailable')
               : tt(supervisionStatus.enabled ? 'supervisorWaiting' : 'supervisorOff') }),
             supervisionStatus.engine === 'desktop' ? h(Button, { variant: 'link', onClick: () => setSupervisionView('settings') }, connectionLabel) : null,
             h(Button, { variant: 'link', onClick: () => viewMonitorHistory() }, `${tt('supervisorHistoryButton')} (${monitorStats?.retainedRecords || 0})`)),
@@ -2492,6 +2561,7 @@ window.__ModuleLoader__.load({
               h('dt', { className: 'cc-monitorLabel' }, tt(label)),
               h('dd', { className: 'cc-monitorNumber' }, monitorStats ? Number(monitorStats[key] || 0).toLocaleString() : '—')))),
           monitorStats?.legacyChecks ? h('div', { className: 'cc-hint' }, `${tt('supervisorLegacyChecks')}: ${monitorStats.legacyChecks}`) : null,
+          supervisionStatus.sleepMode ? h('div', { className: 'cc-success' }, tt('supervisorSleepActive')) : null,
           supervisionStatus.enabled === false ? h('div', { className: 'cc-inlineWarn' }, tt('supervisorGlobalOffHint')) : null,
           rows.length ? h('div', { className: 'cc-sessionMonitorList' }, rows.map((row) => {
             const resume = ['paused', 'attention', 'complete'].includes(row.phase)
@@ -3102,16 +3172,21 @@ window.__ModuleLoader__.load({
           openSession(sessionId)
         } catch (error) {
           fail(error.message, tt('openFailed'))
+        } finally {
+          setBrowsing(false)
         }
       }
 
       async function archiveCurrent() {
-        if (!dispatch || !dispatch.sessionId) return
+        if (archiving || !dispatch || !dispatch.sessionId) return
+        setArchiving(true)
         try {
           await archiveTask(dispatch.sessionId)
           setToast(tt('archived'))
         } catch (error) {
-          fail(error.message, error.hint)
+          fail(error.message, error.hint, error.details)
+        } finally {
+          setArchiving(false)
         }
       }
 
@@ -3185,7 +3260,7 @@ window.__ModuleLoader__.load({
               spellCheck: false,
               onChange: (event) => update({ projectDir: event.target.value }),
             }),
-            h(Button, { variant: 'ghost', onClick: browse }, tt('browse')),
+            h(Button, { variant: 'ghost', busy: browsing, disabled: browsing, onClick: browse }, tt('browse')),
           ),
         ),
         h(
@@ -3251,15 +3326,15 @@ window.__ModuleLoader__.load({
                 Button,
                 {
                   variant: 'primary',
-                  busy: running && job && (job.kind === 'brief' || job.kind === 'brief-session'),
-                  disabled: running || !cliReady,
+                  busy: startingBrief || (running && job && (job.kind === 'brief' || job.kind === 'brief-session')),
+                  disabled: startingBrief || running || !cliReady,
                   onClick: startBrief,
                 },
-                running && job && (job.kind === 'brief' || job.kind === 'brief-session') ? tt('starting') : tt('startBrief'),
+                startingBrief || (running && job && (job.kind === 'brief' || job.kind === 'brief-session')) ? tt('starting') : tt('startBrief'),
               )
             : h(
                 Button,
-                { variant: 'primary', disabled: running, onClick: openDesktopFlow },
+                { variant: 'primary', busy: startingBrief, disabled: startingBrief || running, onClick: openDesktopFlow },
                 tt('openDesktop'),
               ),
           running
@@ -3341,7 +3416,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'cc-actions' },
-            h(Button, { variant: 'primary', onClick: continueFromDesktop }, tt('desktopContinue')),
+            h(Button, { variant: 'primary', busy: continuingDesktop, disabled: continuingDesktop, onClick: continueFromDesktop }, tt('desktopContinue')),
           ),
         )
       } else if (phase === 'dispatched') {
@@ -3398,7 +3473,7 @@ window.__ModuleLoader__.load({
               tt('dshAccept'),
             ) : null,
             h(Button, { variant: 'ghost', onClick: reset }, tt('newProject')),
-            h(Button, { variant: 'ghost', onClick: archiveCurrent }, tt('archive')),
+            h(Button, { variant: 'ghost', busy: archiving, disabled: archiving, onClick: archiveCurrent }, tt('archive')),
           ),
         )
       } else if (showingBrief()) {
@@ -3415,7 +3490,7 @@ window.__ModuleLoader__.load({
               )
             : null,
           job && (job.kind === 'brief' || job.kind === 'brief-session') && job.state === 'error'
-            ? h(Notice, { notice: { message: job.error, hint: job.hint }, tt, onRetry: startBrief })
+            ? h(Notice, { notice: { message: job.error, hint: job.hint, details: job.details }, tt, onRetry: startBrief })
             : null,
           brief
             ? h(
@@ -3493,7 +3568,7 @@ window.__ModuleLoader__.load({
                   ),
                 ),
                 job && job.kind === 'refine' && job.state === 'error'
-                  ? h(Notice, { notice: { message: job.error, hint: job.hint }, tt, onRetry: submitAnswer })
+                  ? h(Notice, { notice: { message: job.error, hint: job.hint, details: job.details }, tt, onRetry: submitAnswer })
                   : null,
               )
             : null,
@@ -3506,7 +3581,7 @@ window.__ModuleLoader__.load({
           'div',
           { className: 'cc-card' },
           job && job.state === 'error'
-            ? h(Notice, { notice: { message: job.error, hint: job.hint }, tt, onRetry: startBrief })
+            ? h(Notice, { notice: { message: job.error, hint: job.hint, details: job.details }, tt, onRetry: startBrief })
             : null,
           job && job.state === 'cancelled'
             ? h('div', { className: 'cc-hint' }, tt('cancelled'))
@@ -3616,7 +3691,7 @@ window.__ModuleLoader__.load({
               }),
             ),
             dispatch.state === 'error'
-              ? h(Notice, { notice: { message: dispatch.message, hint: dispatch.hint }, tt })
+              ? h(Notice, { notice: { message: dispatch.message, hint: dispatch.hint, details: dispatch.details }, tt })
               : null,
             h(AgentPresetPicker, {
               tt,
@@ -3663,12 +3738,14 @@ window.__ModuleLoader__.load({
             manualAcceptance: selected.manualAcceptance === true,
             autoPrompt: selected.autoPrompt === true,
             defaultAction: selected.defaultAction || 'none',
-            supervision: selected.supervision || current.supervision,
+            supervision: current.supervision?.sleepMode === true
+              ? { ...selected.supervision, sleepMode: true, enabled: true, engine: 'cli' }
+              : (selected.supervision || current.supervision),
           }))
           setForm((current) => ({ ...current, taskMode: data.active || id }))
           setToast(tt('taskModeApplied'))
           await refreshSupervision()
-        } catch (error) { fail(error.message, error.hint) }
+        } catch (error) { fail(error.message, error.hint, error.details) }
       }
 
       async function refreshClaudeStatus() {
@@ -3704,7 +3781,7 @@ window.__ModuleLoader__.load({
           }
           if (applied === 0) throw new Error('Claude 状态刷新失败')
           setToast(tt('claudeStatusRefreshed'))
-        } catch (error) { fail(error.message, error.hint) }
+        } catch (error) { fail(error.message, error.hint, error.details) }
         finally { setClaudeStatusBusy(false) }
       }
 
@@ -3717,7 +3794,7 @@ window.__ModuleLoader__.load({
             ? { ...entry, forkPending: true, forkFrom: entry.sessionId, forkRequestedAt: Date.now() }
             : entry))
           setToast(tt('sessionForkDone'))
-        } catch (error) { fail(error.message, error.hint) }
+        } catch (error) { fail(error.message, error.hint, error.details) }
       }
 
       function refreshClaudeSessionList() {
@@ -4952,7 +5029,15 @@ window.__ModuleLoader__.load({
    host's dark mark. Nothing here depends on another plugin being installed.
    =========================================================================== */
 
-.cc-panel {
+/* Tokens are scoped to the plugin's own surfaces, never to :root. A token on
+   :root would also be readable — and overridable — by the host, and a
+   color-scheme on :root rewrites the entire page's rendering (scrollbars,
+   form controls, every light-dark() in the host's own stylesheet). The review
+   badge and its modal render in conversation.chat.assistant-actions, outside
+   .cc-panel, so they are listed here too. */
+.cc-panel,
+.cc-reviewBadge,
+.cc-modalBackdrop {
   /* paper & ink */
   --cc-paper: light-dark(#fffdf8, #262523);
   --cc-paper-2: light-dark(#faf9f5, #1f1e1c);
@@ -5006,9 +5091,16 @@ window.__ModuleLoader__.load({
   container-type: inline-size;
 }
 
-/* The element's own scheme decides which half of every light-dark() applies. */
-body:not([data-ds-dark-theme]) .cc-panel { color-scheme: light; }
-body[data-ds-dark-theme] .cc-panel { color-scheme: dark; }
+/* The element's own scheme decides which half of every light-dark() applies.
+   Scoped to the plugin's surfaces: putting color-scheme on the root would
+   change how the host itself renders, which is exactly the theme bleed this
+   avoids. */
+.cc-panel,
+.cc-reviewBadge,
+.cc-modalBackdrop { color-scheme: light; }
+body[data-ds-dark-theme] :is(.cc-panel, .cc-reviewBadge, .cc-modalBackdrop),
+body[data-theme="dark"] :is(.cc-panel, .cc-reviewBadge, .cc-modalBackdrop),
+body.dark :is(.cc-panel, .cc-reviewBadge, .cc-modalBackdrop) { color-scheme: dark; }
 
 .cc-panel > * {
   box-sizing: border-box;
@@ -5019,17 +5111,50 @@ body[data-ds-dark-theme] .cc-panel { color-scheme: dark; }
 }
 
 /* When dsh-claude-style is installed it marks the body; the panel then joins
-   that scheme instead of standing beside it. Inert on a host without the skin. */
+   that scheme instead of standing beside it. Inert on a host without the skin.
+   Every fallback is the literal the token would otherwise have: pointing the
+   fallback at var(--cc-x) references the very declaration being overridden,
+   which CSS treats as a cycle and resolves to nothing. */
 body[data-dsh-claude-style] .cc-panel {
-  --cc-paper: var(--dsh-claude-card, var(--cc-paper));
-  --cc-paper-2: var(--dsh-claude-canvas, var(--cc-paper-2));
-  --cc-cream: var(--dsh-claude-canvas, var(--cc-cream));
-  --cc-ink: var(--dsw-alias-label-primary, var(--cc-ink));
-  --cc-muted: var(--dsw-alias-label-secondary, var(--cc-muted));
-  --cc-line: var(--dsw-alias-border-l1, var(--cc-line));
-  --cc-serif: var(--dsh-claude-font-serif, var(--cc-serif));
-  --cc-sans: var(--dsw-font-family, var(--cc-sans));
-  --cc-mono: var(--dsh-claude-font-code, var(--cc-mono));
+  --cc-paper: var(--dsh-claude-card, light-dark(#fffdf8, #262523));
+  --cc-paper-2: var(--dsh-claude-canvas, light-dark(#faf9f5, #1f1e1c));
+  --cc-cream: var(--dsh-claude-canvas, light-dark(#f5f2ec, #1a1917));
+  --cc-ink: var(--dsw-alias-label-primary, light-dark(#1c1b19, #f5f2ec));
+  --cc-muted: var(--dsw-alias-label-secondary, light-dark(#7b7871, #a09b92));
+  --cc-line: var(--dsw-alias-border-l1, light-dark(rgba(28, 27, 25, 0.1), rgba(245, 242, 236, 0.12)));
+  --cc-serif: var(--dsh-claude-font-serif, 'Iowan Old Style', 'Palatino Linotype', Georgia, 'Noto Serif SC', serif);
+  --cc-sans: var(--dsw-font-family, 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif);
+  --cc-mono: var(--dsh-claude-font-code, ui-monospace, 'SF Mono', Consolas, monospace);
+}
+
+/* light-dark() needs Chromium 123 / Safari 17.5. An older core would otherwise
+   invalidate every token at once and leave the panel with no surface at all, so
+   the light half is restated literally when the function is unavailable. */
+@supports not (color: light-dark(#fff, #000)) {
+  .cc-panel,
+  .cc-reviewBadge,
+  .cc-modalBackdrop {
+    --cc-paper: #fffdf8;
+    --cc-paper-2: #faf9f5;
+    --cc-cream: #f5f2ec;
+    --cc-ink: #1c1b19;
+    --cc-ink-2: #52504b;
+    --cc-muted: #7b7871;
+    --cc-line: rgba(28, 27, 25, 0.1);
+    --cc-line-strong: rgba(28, 27, 25, 0.18);
+    --cc-accent-strong: #bf5f3d;
+    --cc-accent-tint: rgba(217, 119, 87, 0.09);
+    --cc-accent-line: rgba(217, 119, 87, 0.3);
+    --cc-ok: #2f7a52;
+    --cc-warn: #9a6a12;
+    --cc-bad: #a83a2c;
+    --cc-ok-tint: rgba(47, 122, 82, 0.08);
+    --cc-warn-tint: rgba(154, 106, 18, 0.08);
+    --cc-bad-tint: rgba(168, 58, 44, 0.07);
+    --cc-shadow: 0 1px 2px rgba(28, 27, 25, 0.04);
+    --cc-shadow-pop: 0 12px 32px rgba(28, 27, 25, 0.12);
+  }
+  .cc-modalBackdrop { background: rgba(28, 27, 25, 0.32); }
 }
 
 /* ---------- hero ---------- */
@@ -5786,7 +5911,6 @@ body[data-dsh-claude-style] .cc-panel {
 /* ---------- background jobs ---------- */
 
 .cc-backgroundJobs { display: flex; flex-direction: column; gap: 8px; }
-.cc-backgroundJobsActions { display: flex; justify-content: flex-end; }
 .cc-backgroundJob {
   display: flex;
   align-items: center;
@@ -5799,6 +5923,7 @@ body[data-dsh-claude-style] .cc-panel {
 }
 .cc-progress { flex: 1 1 auto; block-size: 4px; border-radius: 999px; background: var(--cc-line); overflow: hidden; }
 .cc-progressTime { color: var(--cc-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.cc-backgroundJobsActions { display: flex; justify-content: flex-end; }
 
 /* ---------- switch ---------- */
 
@@ -5847,6 +5972,9 @@ body[data-dsh-claude-style] .cc-panel {
 }
 .cc-modal {
   box-sizing: border-box;
+  /* .cc-modalClose is absolutely positioned; without a containing block here it
+     escapes to the fixed backdrop and lands in the viewport corner. */
+  position: relative;
   inline-size: min(680px, 100%);
   max-block-size: min(82vh, 860px);
   overflow: auto;
@@ -5932,6 +6060,23 @@ body[data-dsh-claude-style] .cc-panel {
 .cc-monitorHistoryItem { display: grid; gap: 5px; }
 .cc-monitorSessionName,
 .cc-monitorHistoryObjective { font-weight: 600; }
+.cc-monitorReason { color: var(--cc-ink-2); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cc-errorDetails { margin-block-start: 8px; }
+.cc-errorDetails > summary { cursor: pointer; color: var(--cc-ink-2); font-size: 12px; }
+.cc-errorDetailsLabel { margin-block-start: 8px; color: var(--cc-muted); font-size: 11.5px; }
+.cc-errorDetailsBody {
+  max-block-size: 260px;
+  overflow: auto;
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--cc-line);
+  border-radius: var(--cc-r-sm);
+  background: var(--cc-paper-2);
+  font-family: var(--cc-mono);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .cc-monitorSessionCounts { color: var(--cc-ink-2); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .cc-monitorHistoryMessage { white-space: pre-wrap; }
 .cc-monitorFilters .cc-select { flex: 0 1 230px; min-inline-size: 0; }
@@ -5992,11 +6137,14 @@ body[data-dsh-claude-style] .cc-panel {
   .cc-modeTabs button { flex: 1 1 auto; }
   .cc-seg { grid-template-columns: 1fr; }
 }
+/* A container query cannot style the container itself, so the panel's own
+   padding is viewport-driven; the descendants stay width-driven. */
 @container (max-width: 520px) {
-  .cc-panel { padding: 18px 14px 56px; }
   .cc-heading { font-size: 22px; }
   .cc-card { padding: 15px 16px; }
-  .cc-steps { flex-wrap: nowrap; overflow: auto; }
+}
+@media (max-width: 520px) {
+  .cc-panel { padding: 18px 14px 56px; }
 }
 @media (max-width: 900px) {
   .cc-grid { grid-template-columns: 1fr; }

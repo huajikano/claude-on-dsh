@@ -72,6 +72,30 @@ Claude 返回结构化决策：
 
 CLI / SDK 的每次检查尝试（含重试）单独计数；Desktop 只准备任务不计为执行，收到有效判断才计。实际恢复原生目标或成功发出续跑才计「已续跑」，已运行的目标不重复计数。状态未知的发送不计成功，需人工核对。恢复监工只重置运行上限相关的周期计数，不清空累计统计。旧版只保存的判断次数单列，不补造执行记录。
 
+## 睡眠托管（无人值守）
+
+在「监工设置」打开 `sleepMode` 后，插件进入明确的睡眠托管模式：
+
+- 强制使用本机 CLI 监工，不使用需要人工回填的 Desktop 引擎；
+- 强制开启全局监工，并在启用时立即检查已绑定的未结束会话；
+- 关闭自动验收询问，避免夜间等待用户选择；
+- 要求每日预算 `dailyBudgetUsd > 0`，预算达到后暂停，不会无限调用；
+- 仍受 `maxRetries`、`maxNoProgress`、`maxRounds` 约束，任一上限触发后转为暂停/需要核对；
+- Host 重启后依据持久化状态恢复检查，但发送中的不确定动作不会自动重放。
+
+睡眠托管不是「无限自动运行」：Claude 仍然只能根据项目证据判断继续、等待或完成；不确定、需要用户决定、会话断开或达到安全边界时会停下并记录原因。
+
+配置示例：
+
+```yaml
+supervision:
+  enabled: true
+  sleepMode: true
+  engine: cli
+```
+
+面板开启方式会同步保存到 `$DSH_HOME/claude-on-dsh/settings.json`。
+
 ## 防止重复、费用循环与意外重放
 
 - 同一终止轮次只处理一次；idle、disposed 和 turn/end 同时到达也会合并。
@@ -89,6 +113,7 @@ CLI / SDK 的每次检查尝试（含重试）单独计数；Desktop 只准备�
 ```yaml
 supervision:
   enabled: true
+  sleepMode: false
   engine: cli       # cli | desktop
   cooldownMs: 30000
   retryBaseMs: 60000
@@ -97,7 +122,7 @@ supervision:
   maxRounds: 50
 ```
 
-- 监工启用、引擎和设置由 `/settings` 保存到 `$DSH_HOME/claude-on-dsh/settings.json`。
+- 监工启用、睡眠托管、引擎和设置由 `/settings` 保存到 `$DSH_HOME/claude-on-dsh/settings.json`。
 - 会话状态、待审任务、累计统计和最近 1,000 条已结束记录保存在 `$DSH_HOME/claude-on-dsh/supervision.json`；保留尚未结束的任务。桥接状态和回执位于同目录下的 `desktop-bridge`。
 - `GET /supervision`：当前监工状态和统计。
 - `GET /supervision/history`：可选 `sessionId`、`status`、`limit`；用 `nextCursor` 作为下一页的 `before`。

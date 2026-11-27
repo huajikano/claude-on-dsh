@@ -99,6 +99,22 @@ test('routes migrate historical acceptance settings without losing the budget', 
   const disk = JSON.parse(await readFile(path.join(h.root, 'claude-on-dsh', 'settings.json'), 'utf8'))
   assert.equal(disk.workflowVersion, 2); assert.equal(disk.supervision.enabled, false); assert.equal(disk.manualAcceptance, true)
 })
+test('sleep mode forces CLI monitoring and requires a positive budget', async (t) => {
+  const h = await setup(t, { saved: { dailyBudgetUsd: 5 } })
+  const enabled = await h.invoke('POST', '/settings', {
+    dailyBudgetUsd: 5,
+    supervision: { sleepMode: true, enabled: false, engine: 'desktop' },
+  })
+  assert.equal(enabled.status, 200)
+  assert.equal(enabled.body.supervision.sleepMode, true)
+  assert.equal(enabled.body.supervision.enabled, true)
+  assert.equal(enabled.body.supervision.engine, 'cli')
+  const rejected = await h.invoke('POST', '/settings', {
+    dailyBudgetUsd: 0,
+    supervision: { sleepMode: true },
+  })
+  assert.equal(rejected.status, 400)
+})
 test('passive global event reaches the SDK and emits one completion notice without permission changes', async (t) => {
   const h = await setup(t)
   for (const event of ['agent/status', 'agent/disposed', 'session/event']) assert.ok(h.listeners.get(event).some((row) => row.options?.global === true))

@@ -13,7 +13,7 @@
 import { spawn } from 'node:child_process'
 import { randomUUID, createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { mkdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -631,6 +631,33 @@ function cliArgs({ permissionMode, schema, model, systemPrompt, resume, forkSess
   return args
 }
 
+/** argv as it can be shown to a reader: long values truncated, secrets redacted. */
+function displayArgs(args = []) {
+  return args.map((value) => {
+    const text = redact(String(value))
+    return text.length > 200 ? `${text.slice(0, 200)}…(${text.length} chars)` : text
+  })
+}
+
+/**
+ * Append one Claude CLI failure to a per-day log.
+ *
+ * The panel can only show a short message, and every retry used to overwrite
+ * the previous one. A file keeps the full stderr of each attempt so a failure
+ * that repeats ("退出码 1") can actually be diagnosed afterwards.
+ */
+async function appendCliLog(label, details) {
+  try {
+    const dir = path.join(dshHome(), 'claude-on-dsh', 'logs')
+    await mkdir(dir, { recursive: true })
+    const file = path.join(dir, `cli-${new Date().toISOString().slice(0, 10)}.log`)
+    await appendFile(file, `${JSON.stringify({ at: new Date().toISOString(), label, ...details })}\n`, 'utf8')
+    return file
+  } catch {
+    return ''
+  }
+}
+
 function apiHint(stderr, proxy) {
   const raw = text(stderr).toLowerCase()
   if (
@@ -662,6 +689,7 @@ function startClaudeRun({ executable, prompt, cwd, schema, systemPrompt, permiss
   })
   let stdout = ''
   let stderr = ''
+  const started = Date.now()
   let timedOut = false
   let cancelled = false
   const promise = new Promise((resolve, reject) => {
@@ -699,7 +727,25 @@ function startClaudeRun({ executable, prompt, cwd, schema, systemPrompt, permiss
         return
       }
       if (code !== 0) {
-        fail(userError(`Claude Code 退出码 ${code}`, tail(stderr) || tail(stdout) || apiHint(stderr, proxy), 502))
+        const hint = tail(stderr) || tail(stdout) || apiHint(stderr, proxy)
+        const error = userError(`Claude Code 退出码 ${code}`, hint, 502)
+        // The reader sees a short message; the log keeps what actually failed.
+        error.details = {
+          label: label || '',
+          engine: 'cli',
+          executable: executable,
+          exitCode: code,
+          timedOut: false,
+          cancelled: false,
+          durationMs: Date.now() - started,
+          argv: displayArgs(command.args),
+          stderr: redact(stderr).slice(-8_000),
+          stdout: redact(stdout).slice(-4_000),
+        }
+        appendCliLog(label, error.details).then((file) => {
+          if (file) error.details.logFile = file
+        }).catch(() => {})
+        fail(error)
         return
       }
       try {
@@ -723,10 +769,6 @@ function startClaudeRun({ executable, prompt, cwd, schema, systemPrompt, permiss
     cancel,
   }
 }
-
-/* ------------------------------------------------------------------ */
-/* prompts                                                             */
-/* ------------------------------------------------------------------ */
 
 function buildBriefPrompt({ projectName, projectDir, goal }, render = renderPrompt) {
   return render('brief', { projectName: projectName || '（未命名，请根据目标命名）', projectDir: projectDir || '（尚未指定）', goal })
@@ -1228,6 +1270,12 @@ export function apply(ctx, config = {}) {
   if (!['claude', 'none'].includes(acceptanceSettings.defaultAction)) {
     acceptanceSettings.defaultAction = 'none'
   }
+  if (acceptanceSettings.supervision.sleepMode) {
+    // Sleep mode must not open an interactive acceptance question while the
+    // operator is away; the global supervisor is the sole automatic owner.
+    acceptanceSettings.autoPrompt = false
+    acceptanceSettings.autoAcceptance = false
+  }
   acceptanceSettings.taskMode = normalizeTaskMode(acceptanceSettings.taskMode, 'execute')
   if (
     typeof acceptanceSettings.dailyBudgetUsd !== 'number' ||
@@ -1235,6 +1283,10 @@ export function apply(ctx, config = {}) {
     acceptanceSettings.dailyBudgetUsd < 0
   ) {
     acceptanceSettings.dailyBudgetUsd = 5
+  }
+  if (acceptanceSettings.supervision.sleepMode && !(Number(acceptanceSettings.dailyBudgetUsd) > 0)) {
+    ctx.logger?.warn?.('[claude-on-dsh] 睡眠托管未启用：dailyBudgetUsd 必须大于 0。')
+    acceptanceSettings.supervision = supervisionSettings({ ...acceptanceSettings.supervision, sleepMode: false })
   }
 
   // Acceptance work is a whole-project read plus a long written answer, so the
@@ -1626,10 +1678,9 @@ export function apply(ctx, config = {}) {
       }`,
       `git：${
         facts.git && facts.git.available
-          ? String(facts.git.status || '').slice(0, 1500)
+          ? String(facts.git.statusOutput || '').slice(0, 1500)
           : '不可用'
       }`,
-      `本次新增要求：${activeGoal || '无（按原始任务目标验收）'}`,
       `用户验收要求：${custom || '无'}`,
       `任务标准编号：${(Array.isArray(facts.criteria) ? facts.criteria : []).map((criterion) => `${criterion.id}=${criterion.text}`).join('；') || '未找到任务书验收标准'}`,
     ].join('\n\n')
@@ -2108,7 +2159,7 @@ export function apply(ctx, config = {}) {
       }`,
       `git：${
         facts.git && facts.git.available
-          ? String(facts.git.status || '').slice(0, 1500)
+          ? String(facts.git.statusOutput || '').slice(0, 1500)
           : '不可用'
       }`,
     ].join('\n\n')
@@ -2954,6 +3005,9 @@ export function apply(ctx, config = {}) {
             error: {
               message: messageOf(error),
               hint: text(error && error.hint),
+              // Structured detail for a failed CLI run; the panel shows it in a
+              // collapsible block so "退出码 1" is not the whole story.
+              ...(error && error.details ? { details: error.details } : {}),
             },
           },
           status,
@@ -3548,7 +3602,15 @@ export function apply(ctx, config = {}) {
           const body = await readBody(request)
           const id = normalizeTaskMode(text(body.id).trim(), '')
           if (!id) throw userError('无效任务模式', '可选模式：规划、执行、审查。', 400)
+          const currentSleep = acceptanceSettings.supervision.sleepMode === true
+          if (currentSleep && !(Number(acceptanceSettings.dailyBudgetUsd) > 0)) {
+            throw userError('睡眠托管需要每日 Claude 预算', '请设置大于 0 的 dailyBudgetUsd；达到预算后监工会暂停，不会无限消耗额度。', 400)
+          }
           Object.assign(acceptanceSettings, applyTaskMode(acceptanceSettings, id))
+          if (acceptanceSettings.supervision.sleepMode) {
+            acceptanceSettings.autoPrompt = false
+            acceptanceSettings.autoAcceptance = false
+          }
           acceptanceSettings.workflowVersion = 2
           await mkdir(path.dirname(acceptanceSettingsFile), { recursive: true })
           await writeFile(acceptanceSettingsFile, `${JSON.stringify(acceptanceSettings, null, 2)}\n`, 'utf8')
@@ -3669,6 +3731,15 @@ export function apply(ctx, config = {}) {
       handler: endpoint(async (request) => {
         if (request.method === 'POST') {
           const body = await readBody(request)
+          const requestedSleep = body.supervision && typeof body.supervision === 'object'
+            ? body.supervision.sleepMode === undefined ? acceptanceSettings.supervision.sleepMode === true : body.supervision.sleepMode === true
+            : acceptanceSettings.supervision.sleepMode === true
+          const requestedBudget = typeof body.dailyBudgetUsd === 'number' && Number.isFinite(body.dailyBudgetUsd)
+            ? body.dailyBudgetUsd
+            : acceptanceSettings.dailyBudgetUsd
+          if (requestedSleep && !(requestedBudget > 0)) {
+            throw userError('睡眠托管需要每日 Claude 预算', '请设置大于 0 的 dailyBudgetUsd；达到预算后监工会暂停，不会无限消耗额度。', 400)
+          }
           if (typeof body.autoAcceptance === 'boolean') {
             acceptanceSettings.autoAcceptance = body.autoAcceptance
           }
@@ -3690,6 +3761,13 @@ export function apply(ctx, config = {}) {
           }
           if (body.supervision && typeof body.supervision === 'object') {
             acceptanceSettings.supervision = supervisionSettings({ ...acceptanceSettings.supervision, ...body.supervision })
+          }
+          if (acceptanceSettings.supervision.sleepMode && !(Number(acceptanceSettings.dailyBudgetUsd) > 0)) {
+            throw userError('睡眠托管需要每日 Claude 预算', '请设置大于 0 的 dailyBudgetUsd；达到预算后监工会暂停，不会无限消耗额度。', 400)
+          }
+          if (acceptanceSettings.supervision.sleepMode) {
+            acceptanceSettings.autoPrompt = false
+            acceptanceSettings.autoAcceptance = false
           }
           acceptanceSettings.workflowVersion = 2
           await mkdir(path.dirname(acceptanceSettingsFile), { recursive: true })

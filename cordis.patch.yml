@@ -56,6 +56,7 @@
         # a local MCP tool connection (or manual reply), not automatic chat input.
         supervision:
           enabled: true
+          sleepMode: false
           engine: cli
           cooldownMs: 30000
           retryBaseMs: 60000

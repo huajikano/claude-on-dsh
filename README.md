@@ -20,7 +20,7 @@
    固定版本（推荐）：
 
    ```text
-   github:huajikano/claude-on-dsh#v2.5.2
+   github:huajikano/claude-on-dsh#v2.6.0
    ```
 
    等价写法：
@@ -34,19 +34,19 @@
 
 要求：Windows；本机已安装 Claude Code CLI（或安装后在插件配置里填 `claudeCliPath`）；DSH 安装插件需要 Full access 或批准。仓库公开，无需登录。插件是纯 JavaScript bundle，没有构建步骤。
 
-> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 2.5.2。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
+> 已实测：`pnpm add github:huajikano/claude-on-dsh` 可安装到 2.6.0。若安装停在 `spec-host`，检查本机 Git 能否访问 GitHub（代理/证书）。
 
 ## 更新已安装的版本（重要）
 
 DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 bundle**；直接再次 Add 会提示 `already-installed`，这不是插件版本号没改，而是管理器没有原地升级路径。
 
-更新到 2.5.2：
+更新到 2.6.0：
 
 1. 打开 DSH → **Plugins**；
 2. 找到 **Claude on DSH**，点 **Remove**（只点禁用不够，必须移除依赖）；
 3. 重新 **Add plugin**，填入：
    ```text
-   github:huajikano/claude-on-dsh#v2.5.2
+   github:huajikano/claude-on-dsh#v2.6.0
    ```
 4. 安装后启用，重启/刷新 DSH；
 5. 如果 profile 里的配置被清除，按下面「配置」一节重新填 `claudeCliPath` 等值。
@@ -62,7 +62,7 @@ DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 
 >
 > 这个错误发生在插件代码加载之前，插件本身无法通过运行时逻辑修复；若 Remove 后仍报告同名已安装，应先备份 profile，再让 DSH Desktop 清理残留的 bundle 登记后重启。
 >
-> 不要用不带 `#v2.5.2` 的 `github:huajikano/claude-on-dsh` 做更新；固定 tag 才能明确安装的版本。
+> 不要用不带 `#v2.6.0` 的 `github:huajikano/claude-on-dsh` 做更新；固定 tag 才能明确安装的版本。
 
 ## 主界面
 
@@ -87,7 +87,7 @@ DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 
 
 装了 dsh-claude-style 时，面板会并入那套配色（`body[data-dsh-claude-style]` 作用域内改用主题的画布、卡片、发丝线与衬线体）；没装则完全自持。样式表源文件是 `tools/panel.css`，用 `node tools/apply-panel-css.mjs` 注入 `client.js` 的模板——脚本会拒绝含反引号或 `${` 的 CSS（那会截断 JS 模板），并用 postcss 先解析一遍。
 
-`node tools/check-panel-coverage.mjs` 核对标记里用到的每个 `cc-*` 类都有样式（当前 124/124）。
+`node tools/check-panel-coverage.mjs` 核对标记里用到的每个 `cc-*` 类都有样式，并报告未使用的样式规则；`npm test` 会先运行它，再检查 `panel.css` 与 `client.js` 的内联内容保持同步。
 
 
 ## 查看与修改提示词
@@ -162,6 +162,7 @@ DSH 插件管理器在 HMR profile 下**不允许用同名包覆盖已安装的 
 新增的默认工作流是全局被动监工：主会话每轮结束或意外中断后，Claude 根据原始目标、后续要求和项目证据判断继续、等待或达标。目标已达成时发一次「验收合格」通知，然后停止该会话的后续监工。监工不要求插件面板一直打开，也不会启用其他 DSH 插件。
 
 - CLI / SDK：自动检查、自动续跑；有原生计划目标时优先恢复原生目标，避免重复启动。
+- **睡眠托管（无人值守）**：在「监工设置」打开后，强制使用本机 CLI，由监工接手主会话的完成、续跑和中断处理，不等待用户确认，也不依赖面板保持打开。开启前必须设置大于 0 的每日 Claude 预算；达到预算、连续无进展上限或续跑上限后自动暂停，避免无限消耗或循环。
 - 主页仅保留带累计执行次数的监工入口。独立工作区有概览、可筛选记录和设置，恢复会话监工不会清除累计计数。
 - 桌面版：在「监工设置」配置本地 MCP 连接，Claude Desktop 重载后确认握手。在桌面对话中请 Claude 处理待审任务，可直接回传判断，也保留手动回填。**打开应用不等于已连接，连接后也不会自动发起桌面对话。**
 - 可在面板全局关闭，或逐个会话暂停/恢复。限流、连续无进展、检查失败和预算耗尽会退避或暂停，不会死循环。

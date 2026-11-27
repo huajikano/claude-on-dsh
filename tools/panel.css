@@ -20,7 +20,15 @@
    host's dark mark. Nothing here depends on another plugin being installed.
    =========================================================================== */
 
-.cc-panel {
+/* Tokens are scoped to the plugin's own surfaces, never to :root. A token on
+   :root would also be readable — and overridable — by the host, and a
+   color-scheme on :root rewrites the entire page's rendering (scrollbars,
+   form controls, every light-dark() in the host's own stylesheet). The review
+   badge and its modal render in conversation.chat.assistant-actions, outside
+   .cc-panel, so they are listed here too. */
+.cc-panel,
+.cc-reviewBadge,
+.cc-modalBackdrop {
   /* paper & ink */
   --cc-paper: light-dark(#fffdf8, #262523);
   --cc-paper-2: light-dark(#faf9f5, #1f1e1c);
@@ -74,9 +82,16 @@
   container-type: inline-size;
 }
 
-/* The element's own scheme decides which half of every light-dark() applies. */
-body:not([data-ds-dark-theme]) .cc-panel { color-scheme: light; }
-body[data-ds-dark-theme] .cc-panel { color-scheme: dark; }
+/* The element's own scheme decides which half of every light-dark() applies.
+   Scoped to the plugin's surfaces: putting color-scheme on the root would
+   change how the host itself renders, which is exactly the theme bleed this
+   avoids. */
+.cc-panel,
+.cc-reviewBadge,
+.cc-modalBackdrop { color-scheme: light; }
+body[data-ds-dark-theme] :is(.cc-panel, .cc-reviewBadge, .cc-modalBackdrop),
+body[data-theme="dark"] :is(.cc-panel, .cc-reviewBadge, .cc-modalBackdrop),
+body.dark :is(.cc-panel, .cc-reviewBadge, .cc-modalBackdrop) { color-scheme: dark; }
 
 .cc-panel > * {
   box-sizing: border-box;
@@ -87,17 +102,50 @@ body[data-ds-dark-theme] .cc-panel { color-scheme: dark; }
 }
 
 /* When dsh-claude-style is installed it marks the body; the panel then joins
-   that scheme instead of standing beside it. Inert on a host without the skin. */
+   that scheme instead of standing beside it. Inert on a host without the skin.
+   Every fallback is the literal the token would otherwise have: pointing the
+   fallback at var(--cc-x) references the very declaration being overridden,
+   which CSS treats as a cycle and resolves to nothing. */
 body[data-dsh-claude-style] .cc-panel {
-  --cc-paper: var(--dsh-claude-card, var(--cc-paper));
-  --cc-paper-2: var(--dsh-claude-canvas, var(--cc-paper-2));
-  --cc-cream: var(--dsh-claude-canvas, var(--cc-cream));
-  --cc-ink: var(--dsw-alias-label-primary, var(--cc-ink));
-  --cc-muted: var(--dsw-alias-label-secondary, var(--cc-muted));
-  --cc-line: var(--dsw-alias-border-l1, var(--cc-line));
-  --cc-serif: var(--dsh-claude-font-serif, var(--cc-serif));
-  --cc-sans: var(--dsw-font-family, var(--cc-sans));
-  --cc-mono: var(--dsh-claude-font-code, var(--cc-mono));
+  --cc-paper: var(--dsh-claude-card, light-dark(#fffdf8, #262523));
+  --cc-paper-2: var(--dsh-claude-canvas, light-dark(#faf9f5, #1f1e1c));
+  --cc-cream: var(--dsh-claude-canvas, light-dark(#f5f2ec, #1a1917));
+  --cc-ink: var(--dsw-alias-label-primary, light-dark(#1c1b19, #f5f2ec));
+  --cc-muted: var(--dsw-alias-label-secondary, light-dark(#7b7871, #a09b92));
+  --cc-line: var(--dsw-alias-border-l1, light-dark(rgba(28, 27, 25, 0.1), rgba(245, 242, 236, 0.12)));
+  --cc-serif: var(--dsh-claude-font-serif, 'Iowan Old Style', 'Palatino Linotype', Georgia, 'Noto Serif SC', serif);
+  --cc-sans: var(--dsw-font-family, 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif);
+  --cc-mono: var(--dsh-claude-font-code, ui-monospace, 'SF Mono', Consolas, monospace);
+}
+
+/* light-dark() needs Chromium 123 / Safari 17.5. An older core would otherwise
+   invalidate every token at once and leave the panel with no surface at all, so
+   the light half is restated literally when the function is unavailable. */
+@supports not (color: light-dark(#fff, #000)) {
+  .cc-panel,
+  .cc-reviewBadge,
+  .cc-modalBackdrop {
+    --cc-paper: #fffdf8;
+    --cc-paper-2: #faf9f5;
+    --cc-cream: #f5f2ec;
+    --cc-ink: #1c1b19;
+    --cc-ink-2: #52504b;
+    --cc-muted: #7b7871;
+    --cc-line: rgba(28, 27, 25, 0.1);
+    --cc-line-strong: rgba(28, 27, 25, 0.18);
+    --cc-accent-strong: #bf5f3d;
+    --cc-accent-tint: rgba(217, 119, 87, 0.09);
+    --cc-accent-line: rgba(217, 119, 87, 0.3);
+    --cc-ok: #2f7a52;
+    --cc-warn: #9a6a12;
+    --cc-bad: #a83a2c;
+    --cc-ok-tint: rgba(47, 122, 82, 0.08);
+    --cc-warn-tint: rgba(154, 106, 18, 0.08);
+    --cc-bad-tint: rgba(168, 58, 44, 0.07);
+    --cc-shadow: 0 1px 2px rgba(28, 27, 25, 0.04);
+    --cc-shadow-pop: 0 12px 32px rgba(28, 27, 25, 0.12);
+  }
+  .cc-modalBackdrop { background: rgba(28, 27, 25, 0.32); }
 }
 
 /* ---------- hero ---------- */
@@ -866,6 +914,7 @@ body[data-dsh-claude-style] .cc-panel {
 }
 .cc-progress { flex: 1 1 auto; block-size: 4px; border-radius: 999px; background: var(--cc-line); overflow: hidden; }
 .cc-progressTime { color: var(--cc-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.cc-backgroundJobsActions { display: flex; justify-content: flex-end; }
 
 /* ---------- switch ---------- */
 
@@ -914,6 +963,9 @@ body[data-dsh-claude-style] .cc-panel {
 }
 .cc-modal {
   box-sizing: border-box;
+  /* .cc-modalClose is absolutely positioned; without a containing block here it
+     escapes to the fixed backdrop and lands in the viewport corner. */
+  position: relative;
   inline-size: min(680px, 100%);
   max-block-size: min(82vh, 860px);
   overflow: auto;
@@ -999,6 +1051,23 @@ body[data-dsh-claude-style] .cc-panel {
 .cc-monitorHistoryItem { display: grid; gap: 5px; }
 .cc-monitorSessionName,
 .cc-monitorHistoryObjective { font-weight: 600; }
+.cc-monitorReason { color: var(--cc-ink-2); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cc-errorDetails { margin-block-start: 8px; }
+.cc-errorDetails > summary { cursor: pointer; color: var(--cc-ink-2); font-size: 12px; }
+.cc-errorDetailsLabel { margin-block-start: 8px; color: var(--cc-muted); font-size: 11.5px; }
+.cc-errorDetailsBody {
+  max-block-size: 260px;
+  overflow: auto;
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--cc-line);
+  border-radius: var(--cc-r-sm);
+  background: var(--cc-paper-2);
+  font-family: var(--cc-mono);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .cc-monitorSessionCounts { color: var(--cc-ink-2); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .cc-monitorHistoryMessage { white-space: pre-wrap; }
 .cc-monitorFilters .cc-select { flex: 0 1 230px; min-inline-size: 0; }
@@ -1059,11 +1128,14 @@ body[data-dsh-claude-style] .cc-panel {
   .cc-modeTabs button { flex: 1 1 auto; }
   .cc-seg { grid-template-columns: 1fr; }
 }
+/* A container query cannot style the container itself, so the panel's own
+   padding is viewport-driven; the descendants stay width-driven. */
 @container (max-width: 520px) {
-  .cc-panel { padding: 18px 14px 56px; }
   .cc-heading { font-size: 22px; }
   .cc-card { padding: 15px 16px; }
-  .cc-steps { flex-wrap: nowrap; overflow: auto; }
+}
+@media (max-width: 520px) {
+  .cc-panel { padding: 18px 14px 56px; }
 }
 @media (max-width: 900px) {
   .cc-grid { grid-template-columns: 1fr; }

@@ -167,3 +167,42 @@ test('writeReports writes json and md inside the workspace and rejects escapes',
 test('fixture workspace is absolute', () => {
   assert.match(workspace, /^[A-Za-z]:\\/)
 })
+
+test('a numbered criterion with no verdict is reported as a gap, not ignored', () => {
+  const facts = sampleFacts()
+  const { checks, evidence } = runCheckers(facts, { allowedPaths: [] })
+  const criteria = [{ id: 'A1', text: '登录可用' }, { id: 'A2', text: '手机端可用' }]
+  const judged = validJudge(checks, evidence)
+  judged.criteria = [{ id: 'A1', conclusion: 'pass', evidenceIds: [evidence[0].id], note: 'ok' }]
+  const errors = validateJudgeOutput(judged, checks, evidence, criteria)
+  assert.match(errors.join('; '), /missing criterion A2/)
+})
+
+test('a criterion cannot pass without citing evidence', () => {
+  const facts = sampleFacts()
+  const { checks, evidence } = runCheckers(facts, { allowedPaths: [] })
+  const criteria = [{ id: 'A1', text: '登录可用' }]
+  const judged = validJudge(checks, evidence)
+  judged.criteria = [{ id: 'A1', conclusion: 'pass', evidenceIds: [], note: 'ok' }]
+  const errors = validateJudgeOutput(judged, checks, evidence, criteria)
+  assert.match(errors.join('; '), /criterion A1 is pass without evidence/)
+})
+
+test('the report carries per-criterion conclusions and lists the unverified ones', async () => {
+  const facts = sampleFacts()
+  facts.criteria = [{ id: 'A1', text: '登录可用' }, { id: 'A2', text: '手机端可用' }]
+  const { checks, evidence } = runCheckers(facts, { allowedPaths: [] })
+  const judged = validJudge(checks, evidence)
+  judged.criteria = [
+    { id: 'A1', conclusion: 'pass', evidenceIds: [evidence[0].id], note: 'ok' },
+    { id: 'A2', conclusion: 'uncertain', evidenceIds: [], note: '没有手机端证据' },
+  ]
+  const result = await judgeAcceptance({
+    facts,
+    checks,
+    evidence,
+    runJudge: async () => ({ data: judged }),
+    options: { judgeRetries: 0 },
+  })
+  assert.equal(result.status, 'completed')
+})

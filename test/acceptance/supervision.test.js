@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { attachSupervision } from '../../lib/supervision.js'
-import { buildSupervisionPrompt, migrateWorkflowSettings, ownMessage, supervisionMessage, turnSnapshot, validateSupervisionDecision, SUPERVISOR_MARKER } from '../../lib/supervision-policy.js'
+import { buildSupervisionPrompt, compactSupervisionSnapshot, migrateWorkflowSettings, ownMessage, supervisionMessage, supervisionSettings, turnSnapshot, validateSupervisionDecision, SUPERVISOR_MARKER, SUPERVISION_PROMPT_MAX_CHARS } from '../../lib/supervision-policy.js'
 
 const decision = (kind = 'continue') => ({ decision: kind, reason: 'src/app.js 与目标比较', message: '继续补齐剩余目标', evidence: ['src/app.js:1-20'], goalSatisfied: kind === 'complete' })
 const events = (turn = 1, reason = 'completed', final = '尚未完成，需要继续') => [
@@ -41,6 +41,43 @@ async function harness(fn, opts = {}) {
   finally { monitor.dispose(); await monitor.flush(); await rm(dir, { recursive: true, force: true }) }
 }
 
+test('sleep mode forces enabled CLI supervision', () => {
+  const cfg = supervisionSettings({ sleepMode: true, enabled: false, engine: 'desktop' })
+  assert.equal(cfg.sleepMode, true)
+  assert.equal(cfg.enabled, true)
+  assert.equal(cfg.engine, 'cli')
+  assert.equal(supervisionSettings({ enabled: false, engine: 'desktop' }).engine, 'desktop')
+})
+
+test('supervision model packet stays within a bounded size', () => {
+  const long = 'x'.repeat(20_000)
+  const snapshot = {
+    sessionId: 's1', turnKey: 's1:1', workspace: 'D:/project', goal: long,
+    requirements: Array.from({ length: 30 }, () => long),
+    finalText: long, dialogue: Array.from({ length: 12 }, () => ({ role: 'assistant', text: long })),
+    calls: Array.from({ length: 24 }, (_, index) => ({ seq: index, type: 'tool/result', data: { message: { content: long } } })),
+  }
+  const compact = compactSupervisionSnapshot(snapshot, { commands: [], changedFiles: [], git: {} })
+  const prompt = buildSupervisionPrompt(snapshot, { commands: [], changedFiles: [], git: {} })
+  assert.equal(compact.truncated, true)
+  assert.ok(prompt.length <= SUPERVISION_PROMPT_MAX_CHARS + 2_000)
+})
+
+test('different sessions can be reviewed concurrently', async () => {
+  let active = 0
+  let peak = 0
+  await harness(async ({ monitor, records }) => {
+    await Promise.all([monitor.check('s1'), monitor.check('s2')])
+    assert.equal(records.reviews.length, 2)
+    assert.equal(peak, 2)
+  }, { review: async () => {
+    active += 1
+    peak = Math.max(peak, active)
+    await delay(25)
+    active -= 1
+    return decision('wait')
+  } })
+})
 test('a continuation message is just the next step, and still recognised as ours', () => {
   const bare = supervisionMessage({ decision: 'continue', reason: '目标未完成', message: '', evidence: [] })
   assert.equal(bare, `${SUPERVISOR_MARKER} 继续`, 'no reason paragraph, just 继续')

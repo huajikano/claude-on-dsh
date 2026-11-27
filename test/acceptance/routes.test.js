@@ -297,6 +297,42 @@ test('prompt settings persist, validate, reset and reach exported templates and 
   })
 })
 
+test('a failed CLI run reports exit code, argv and stderr instead of only the message', async (t) => {
+  t.mock.method(childProcess, 'spawn', () => {
+    const child = new EventEmitter()
+    child.stdin = new PassThrough()
+    child.stdout = new PassThrough()
+    child.stderr = new PassThrough()
+    child.kill = () => true
+    child.stdin.on('finish', () => {
+      child.stderr.write('Error: proxy refused connection')
+      child.emit('close', 1)
+    })
+    return child
+  })
+  syncBuiltinESMExports()
+  try {
+    await withIsolatedEnv(async (root) => {
+      const workspace = path.join(root, 'workspace')
+      const executable = path.join(root, 'claude.exe')
+      await mkdir(workspace, { recursive: true })
+      await writeFile(executable, '')
+      const harness = createHarness(workspace)
+      apply(harness.ctx, { claudeCliPath: executable, engine: 'cli' })
+      const started = await harness.invoke('POST', '/jobs', { kind: 'brief', projectDir: workspace, goal: 'Build a timer' })
+      const job = await waitFor(async () => {
+        const response = await harness.invoke('GET', '/jobs', undefined, '?id=' + started.data.job.id)
+        return response.data.job.state !== 'running' ? response.data.job : null
+      })
+      assert.equal(job.state, 'error')
+      assert.match(job.error, /退出码 1/)
+      assert.equal(job.details.exitCode, 1)
+      assert.match(job.details.stderr, /proxy refused connection/)
+      assert.ok(job.details.argv.some((item) => item.includes('--json-schema')))
+    })
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports() }
+})
+
 test('saved opening and refine prompts are sent to Claude and the saved handoff wraps the result', async (t) => {
   const runs = []
   t.mock.method(childProcess, 'spawn', (_file, args) => {

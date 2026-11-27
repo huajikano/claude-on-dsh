@@ -1,6 +1,6 @@
 {
   "name": "claude-on-dsh",
-  "version": "2.5.2",
+  "version": "2.6.0",
   "private": true,
   "description": "Claude on DSH: Claude Code CLI or Agent SDK plans a project, hands it to DSH, and adds editable opening questions, handoffs, post-turn Claude review, and a reviewed development document.",
   "type": "module",
@@ -36,7 +36,7 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node --test --test-reporter spec \"test/acceptance/*.test.js\""
+    "test": "node tools/check-panel-coverage.mjs && node tools/apply-panel-css.mjs --check && node --test --test-reporter spec \"test/acceptance/*.test.js\""
   },
   "dsh": {
     "bundle": {
