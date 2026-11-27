@@ -22,7 +22,7 @@ import { attachReviewPrompt } from './lib/acceptance/review.js'
 import { attachSupervision } from './lib/supervision.js'
 import { DesktopSupervisionBridge, desktopConnectionState, probeClaudeDesktop, desktopConfigCandidates, desktopNodeExecutable } from './lib/desktop-supervision-bridge.js'
 import { fileURLToPath } from 'node:url'
-import { buildSupervisionPrompt, migrateWorkflowSettings, supervisionSettings, SUPERVISION_SCHEMA } from './lib/supervision-policy.js'
+import { buildSupervisionPrompt, isActivelyMonitored, migrateWorkflowSettings, supervisionSettings, SUPERVISION_SCHEMA } from './lib/supervision-policy.js'
 import { redact } from './lib/acceptance/contract.js'
 import { executeAcceptance } from './lib/acceptance/kernel.js'
 import { extractTask, buildFacts, recentConversation } from './lib/acceptance/facts.js'
@@ -3427,7 +3427,13 @@ export function apply(ctx, config = {}) {
       methods: ['GET'],
       handler: endpoint(async () => {
         const result = await ctx.sessionController.list({}, AbortSignal.timeout(20_000))
-        const watched = new Set(supervisor.list().items.map((row) => row.sessionId))
+        // `monitored` means "the supervisor is acting on it right now", not
+        // "a row exists". A finished or paused row still exists so the panel can
+        // show its verdict, but calling that "already monitored" contradicted
+        // the overview, which shows the same session as 已达标 / 已暂停.
+        const rows = supervisor.list().items
+        const monitored = new Set(rows.filter((row) => isActivelyMonitored(row)).map((row) => row.sessionId))
+        const phases = new Map(rows.map((row) => [row.sessionId, row.phase]))
         const items = latestForkSessions(result.items || [])
           .map((item) => ({
             sessionId: item.sessionId,
@@ -3436,9 +3442,10 @@ export function apply(ctx, config = {}) {
             cwd: item.cwd,
             updatedAt: item.updatedAt,
             running: Boolean(item.running),
-            // Whether the supervisor already knows this session, so the picker
-            // can show "monitored" instead of offering a second takeover.
-            monitored: watched.has(item.sessionId),
+            monitored: monitored.has(item.sessionId),
+            // The phase a row is parked in (`complete`, `paused`, `attention`),
+            // so the panel can say 已达标 instead of offering a blind re-takeover.
+            supervisionPhase: text(phases.get(item.sessionId)).trim(),
           }))
         return json({ items })
       }),

@@ -214,6 +214,11 @@ window.__ModuleLoader__.load({
         supervisorAdoptLoading: '正在读取会话…',
         supervisorAdoptEmpty: '没有找到可接管的会话。',
         supervisorAdopted: '已在监工',
+        supervisorAdoptAgain: '重新接管',
+        supervisorPhase_complete: '已达标，监工已停止',
+        supervisorPhase_paused: '已暂停',
+        supervisorPhase_attention: '需要核对',
+        supervisorPhase_excluded: '不参与监工',
         supervisorAdoptedToast: '已接管该会话，监工开始检查',
         supervisorSleepMode: '睡眠托管（无人值守）',
         supervisorSleepModeHint: '开启后强制使用 CLI 监工，自动处理主会话的完成、续跑和中断；不会等待你的确认。仍受每日预算、无进展上限和续跑上限约束。',
@@ -611,6 +616,11 @@ window.__ModuleLoader__.load({
         supervisorAdoptLoading: 'Reading conversations…',
         supervisorAdoptEmpty: 'No conversation to take over was found.',
         supervisorAdopted: 'Monitored',
+        supervisorAdoptAgain: 'Take over again',
+        supervisorPhase_complete: 'Goal met; monitoring stopped',
+        supervisorPhase_paused: 'Paused',
+        supervisorPhase_attention: 'Needs inspection',
+        supervisorPhase_excluded: 'Not monitored',
         supervisorAdoptedToast: 'Conversation taken over; the supervisor is checking it',
         supervisorSleepMode: 'Sleep mode (unattended)',
         supervisorSleepModeHint: 'Forces the CLI monitor to handle main-session completion, continuation, and interruption while you are away. Budget, no-progress, and round limits still apply.',
@@ -2671,8 +2681,15 @@ window.__ModuleLoader__.load({
                 variant: item.monitored ? 'link' : 'primary',
                 busy: adoptBusy && adoptBusyId === item.sessionId,
                 disabled: Boolean(adoptBusy) || item.monitored === true,
+                title: item.supervisionPhase ? tt(`supervisorPhase_${item.supervisionPhase}`) : '',
                 onClick: () => adoptSession(item),
-              }, item.monitored ? tt('supervisorAdopted') : tt('supervisorAdoptAction')))))
+              }, item.monitored
+                ? tt('supervisorAdopted')
+                : item.supervisionPhase
+                  // A parked row (已达标 / 已暂停 / 需要核对) is not being
+                  // monitored, so the action reads 重新接管 and says why.
+                  ? tt('supervisorAdoptAgain')
+                  : tt('supervisorAdoptAction')))))
             : h('div', { className: 'cc-monitorBand cc-hint' },
               adoptBusy ? tt('supervisorAdoptLoading') : tt('supervisorAdoptEmpty')))
       }

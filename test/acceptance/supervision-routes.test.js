@@ -61,6 +61,9 @@ async function setup(t, { desktop = false, saved = {}, native = null, engine = '
         if (unreadable && sessionId === unreadable) throw Object.assign(new Error('session not found'), { status: 404 })
         return { meta: { id: agent.id, cwd: workspace }, events }
       },
+      list: async () => ({
+        items: [{ sessionId: agent.id, title: 'monitored session', cwd: workspace, updatedAt: Date.now(), running: false }],
+      }),
       prompt: async (request) => { sent.push(request); return { accepted: true } },
     },
   }
@@ -268,4 +271,33 @@ test('adopt rejects a session that cannot be read', async (t) => {
   const h = await setup(t, { unreadable: 'session-unknown' })
   const response = await h.invoke('POST', '/supervision', { sessionId: 'session-unknown', action: 'adopt' })
   assert.equal(response.status, 404)
+})
+
+test('a completed session is not reported as still monitored', async (t) => {
+  const h = await setup(t)
+  h.emitEnd()
+  await waitFor(async () => (await h.invoke('GET', '/supervision')).body.items.some((row) => row.phase === 'complete'))
+  const sessions = (await h.invoke('GET', '/sessions')).body.items
+  const row = sessions.find((item) => item.sessionId === 'session-main')
+  assert.ok(row, 'the session is listed')
+  assert.equal(row.monitored, false, 'a finished row is not actively monitored')
+  assert.equal(row.supervisionPhase, 'complete', 'but its phase is reported')
+})
+
+test('an actively watched session is reported as monitored', async (t) => {
+  const h = await setup(t)
+  const adopted = await h.invoke('POST', '/supervision', { sessionId: 'session-main', action: 'adopt' })
+  assert.equal(adopted.status, 200)
+  const row = (await h.invoke('GET', '/sessions')).body.items.find((item) => item.sessionId === 'session-main')
+  assert.equal(row.monitored, true)
+  assert.equal(row.supervisionPhase, 'watching')
+})
+
+test('a paused session reports its phase and is not monitored', async (t) => {
+  const h = await setup(t)
+  await h.invoke('POST', '/supervision', { sessionId: 'session-main', action: 'adopt' })
+  await h.invoke('POST', '/supervision', { sessionId: 'session-main', action: 'pause' })
+  const row = (await h.invoke('GET', '/sessions')).body.items.find((item) => item.sessionId === 'session-main')
+  assert.equal(row.monitored, false)
+  assert.equal(row.supervisionPhase, 'paused')
 })
